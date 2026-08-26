@@ -6,7 +6,7 @@ import heapq
 
 # ページ設定
 st.set_page_config(
-    page_title="三陸鉄道周辺 観光周遊ルート検索",
+    page_title="三陸じぶんの旅パス",
     page_icon="🚃",
     layout="wide"
 )
@@ -66,13 +66,14 @@ def load_data(filepath, target_date_str):
     target_dt = datetime.datetime.strptime(target_date_str, "%Y-%m-%d").date()
     all_legs = []
 
+    # 路線名マッピング（岩泉町民バス・岩手県北バスに対応）
     sheet_line_map = {
         '三陸鉄道_北行': '三陸鉄道',
         '三陸鉄道_南行': '三陸鉄道',
-        '龍泉洞バス_西行': '龍泉洞バス',
-        '龍泉洞バス_東行': '龍泉洞バス',
-        '浄土ヶ浜バス_往路': '浄土ヶ浜バス',
-        '浄土ヶ浜バス_復路': '浄土ヶ浜バス',
+        '龍泉洞バス_西行': '岩泉町民バス',
+        '龍泉洞バス_東行': '岩泉町民バス',
+        '浄土ヶ浜バス_往路': '岩手県北バス',
+        '浄土ヶ浜バス_復路': '岩手県北バス',
         '宮古うみねこ丸便': '宮古うみねこ丸',
         '北山崎断崖クルーズ': '北山崎断崖クルーズ',
         '田野畑観光タクシー_行き': '田野畑観光タクシー',
@@ -145,7 +146,15 @@ def load_data(filepath, target_date_str):
                             'arr_time': arr_t
                         })
 
+    # 乗換設定の読み込み（路線名の新旧表記ブレを自動吸収）
     df_trans = pd.read_excel(filepath, sheet_name='乗換設定')
+    line_name_alias = {
+        '龍泉洞バス': '岩泉町民バス',
+        '浄土ヶ浜バス': '岩手県北バス'
+    }
+    df_trans['乗換元路線'] = df_trans['乗換元路線'].replace(line_name_alias)
+    df_trans['乗換先路線'] = df_trans['乗換先路線'].replace(line_name_alias)
+
     trans_map = {}
     for _, r in df_trans.iterrows():
         k = (str(r['乗換元路線']).strip(), str(r['乗換元停留所・駅']).strip(),
@@ -272,10 +281,9 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
 # ==========================================
 # 2. UI 表示
 # ==========================================
-st.title("🚃 三陸鉄道周辺 観光周遊ルート検索")
-st.caption("三陸鉄道・バス・遊覧船・タクシーを連携させた最適ルート探索")
+st.title("🚃 三陸じぶんの旅パス")
+st.caption("行きたい場所を選んで、ルート検索からチケット購入まで")
 
-# スマホ向けにアコーディオン形式で条件設定
 with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=True):
     col_d1, col_d2 = st.columns(2)
     with col_d1:
@@ -336,11 +344,15 @@ if search_btn:
 
                             for step in p['history']:
                                 if step['type'] == 'ride':
-                                    st.markdown(f"🚆 **[{step['line']}]** `{step['from_stop']}` (**{min_to_str(step['dep_time'])}発**) ➔ `{step['to_stop']}` (**{min_to_str(step['arr_time'])}着**) _({step['trip_name']})_")
+                                    st.markdown(f"🚆 **[{step['line']}]** `{step['from_stop']}` (**{min_to_str(step['dep_time'])}発**) ➔ `{step['to_stop']}` (**{min_to_str(step['arr_time'])}着**)")
                                 elif step['type'] == 'transfer':
                                     st.caption(f" 🚶 **徒歩・乗換 {step['duration']}分**: {step['from_stop']} ➔ {step['to_stop']}")
                                 elif step['type'] == 'stay':
                                     st.success(f"★ **【観光・滞在】 {step['spot']}** （**{min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])}** / {step['stay_min']}分間）")
                             st.divider()
+
+                    # 次の検索ボタン
+                    if st.button("🔄 次の検索（条件を再設定する）", use_container_width=True):
+                        st.rerun()
             except Exception as e:
                 st.error(f"エラーが発生しました: {e}")
