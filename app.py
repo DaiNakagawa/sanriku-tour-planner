@@ -11,8 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# ファイル名
-FILE_PATH = "統合版・2026年三陸鉄道周辺ダイヤ_4.xlsx"
+FILE_PATH = "統合版・2026年三陸鉄道周辺ダイヤ_4_2.xlsx"
 
 # ==========================================
 # 1. データ読み込み＆探索ロジック
@@ -67,7 +66,6 @@ def load_data(filepath, target_date_str):
     target_dt = datetime.datetime.strptime(target_date_str, "%Y-%m-%d").date()
     all_legs = []
     
-    # 【変更点】シート名を新しい統一名称（岩手県北バス・岩泉町民バス）に対応
     sheet_line_map = {
         '三陸鉄道_北行': '三陸鉄道',
         '三陸鉄道_南行': '三陸鉄道',
@@ -79,12 +77,10 @@ def load_data(filepath, target_date_str):
         '龍泉洞バス_東行': '岩泉町民バス',
         '浄土ヶ浜バス_往路': '岩手県北バス',
         '浄土ヶ浜バス_復路': '岩手県北バス',
-        '宮古うみねこ丸便': '宮古うみねこ丸',
-        '北山崎断崖クルーズ': '北山崎断崖クルーズ',
-        '田野畑観光タクシー_行き': '田野畑観光タクシー',
-        '田野畑観光タクシー_帰り': '田野畑観光タクシー',
         '普代村営バス_往路': '普代村営バス',
         '普代村営バス_復路': '普代村営バス',
+        '田野畑観光タクシー_行き': '田野畑観光タクシー',
+        '田野畑観光タクシー_帰り': '田野畑観光タクシー',
     }
     
     for sname, line_name in sheet_line_map.items():
@@ -97,7 +93,6 @@ def load_data(filepath, target_date_str):
         for _, row in df.iterrows():
             if not is_service_available(row, target_dt):
                 continue
-                
             trip_id = row['便ID']
             trip_name = row['便名']
             
@@ -142,13 +137,8 @@ def load_data(filepath, target_date_str):
                     s_to, arr_t, dep_t = merged_stops[j]
                     if dep_f is not None and arr_t is not None and dep_f <= arr_t:
                         all_legs.append({
-                            'line': line_name,
-                            'trip_id': trip_id,
-                            'trip_name': trip_name,
-                            'from_stop': s_from,
-                            'dep_time': dep_f,
-                            'to_stop': s_to,
-                            'arr_time': arr_t
+                            'line': line_name, 'trip_id': trip_id, 'trip_name': trip_name,
+                            'from_stop': s_from, 'dep_time': dep_f, 'to_stop': s_to, 'arr_time': arr_t
                         })
                         
     df_trans = pd.read_excel(filepath, sheet_name='乗換設定')
@@ -167,6 +157,7 @@ def load_fare_data(filepath):
     facility_fares = {}
     
     xls = pd.ExcelFile(filepath)
+    
     if '三鉄_運賃三角表' in xls.sheet_names:
         df_sanriku = pd.read_excel(filepath, sheet_name='三鉄_運賃三角表', index_col=0)
         for row in df_sanriku.index:
@@ -178,6 +169,14 @@ def load_fare_data(filepath):
                         sanriku_fares[(r_name, c_name)] = int(df_sanriku.at[row, col])
                     except:
                         pass
+                        
+    if '施設料金' in xls.sheet_names:
+        df_fac = pd.read_excel(filepath, sheet_name='施設料金')
+        for _, row in df_fac.iterrows():
+            name = str(row['施設・アクティビティ名']).strip()
+            normal_f = float(row['通常料金']) if pd.notna(row['通常料金']) else 0
+            group_f = float(row['団体・割引料金']) if pd.notna(row['団体・割引料金']) else normal_f
+            facility_fares[name] = {'normal': normal_f, 'group': group_f}
                     
     if '他社_通常料金' in xls.sheet_names:
         df_other = pd.read_excel(filepath, sheet_name='他社_通常料金')
@@ -192,16 +191,16 @@ def load_fare_data(filepath):
             normal_f = float(row['運賃']) if pd.notna(row['運賃']) else 0
             group_f = float(row['団体']) if pd.notna(row['団体']) else normal_f
             
-            if f_stop == 'nan' and t_stop == 'nan':
-                facility_fares[operator] = {'normal': normal_f, 'group': group_f}
+            if f_stop == t_stop or (f_stop == 'nan' and t_stop == 'nan') or operator == '龍泉洞':
+                if operator not in facility_fares:
+                    facility_fares[operator] = {'normal': normal_f, 'group': group_f}
             else:
                 other_fares[(operator, f_stop, t_stop)] = {'normal': normal_f, 'group': group_f}
                 other_fares[(operator, t_stop, f_stop)] = {'normal': normal_f, 'group': group_f}
                 
     return sanriku_fares, other_fares, facility_fares
 
-def calculate_fares(history, sanriku_fares, other_fares, facility_fares):
-    # 【変更点】龍泉洞前（バス停）ではなく「龍泉洞（施設）」への滞在で判定する
+def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_people):
     has_ryusendo = any(step.get('type') == 'stay' and step.get('spot') == '龍泉洞' for step in history)
     
     normal_total = 0
@@ -209,8 +208,8 @@ def calculate_fares(history, sanriku_fares, other_fares, facility_fares):
     breakdown = []
     
     if has_ryusendo:
-        cost_total += 4000
-        breakdown.append("🎟️ **【セット適用】岩泉龍泉洞１日フリーきっぷ: 原価 ¥4,000**")
+        cost_total += 4000 * num_people
+        breakdown.append(f"🎟️ **【セット適用】岩泉龍泉洞１日フリーきっぷ: 原価 ¥4,000 × {num_people}名 = ¥{4000 * num_people:,}**")
         
     for step in history:
         if step['type'] == 'ride':
@@ -218,47 +217,58 @@ def calculate_fares(history, sanriku_fares, other_fares, facility_fares):
             f_stop = step['from_stop']
             t_stop = step['to_stop']
             
-            n_fare = 0
-            c_fare = 0
+            n_fare_unit = 0
+            c_fare_unit = 0
             
             if line == '三陸鉄道':
-                n_fare = sanriku_fares.get((f_stop, t_stop), 0)
+                n_fare_unit = sanriku_fares.get((f_stop, t_stop), 0)
                 if not has_ryusendo:
-                    c_fare = n_fare
-                breakdown.append(f"🚆 [三陸鉄道] {f_stop} ➔ {t_stop} : 通常 ¥{n_fare:,} / 原価 ¥{c_fare:,}")
+                    c_fare_unit = n_fare_unit
+                breakdown.append(f"🚆 [三陸鉄道] {f_stop} ➔ {t_stop} : 通常 ¥{n_fare_unit * num_people:,} / 原価 ¥{c_fare_unit * num_people:,}")
             else:
                 fare_info = other_fares.get((line, f_stop, t_stop))
                 if fare_info:
-                    n_fare = int(fare_info['normal'])
+                    n_fare_unit = int(fare_info['normal'])
                     if has_ryusendo and line == '岩泉町民バス':
-                        c_fare = 0
+                        c_fare_unit = 0
                     else:
-                        c_fare = int(fare_info['group'])
+                        c_fare_unit = int(fare_info['group'])
                 else:
-                    n_fare = 0
-                    c_fare = 0
-                breakdown.append(f"🚌 [{line}] {f_stop} ➔ {t_stop} : 通常 ¥{n_fare:,} / 原価 ¥{c_fare:,}")
+                    n_fare_unit = 0
+                    c_fare_unit = 0
+                breakdown.append(f"🚌 [{line}] {f_stop} ➔ {t_stop} : 通常 ¥{n_fare_unit * num_people:,} / 原価 ¥{c_fare_unit * num_people:,}")
             
-            normal_total += n_fare
-            cost_total += c_fare
+            normal_total += n_fare_unit * num_people
+            cost_total += c_fare_unit * num_people
             
         elif step['type'] == 'stay':
-            spot = step['spot']
-            # 【変更点】施設名判定を「龍泉洞」に
-            if spot == '龍泉洞':
-                f_info = facility_fares.get('龍泉洞')
+            act_name = step.get('activity')
+            if act_name:
+                f_info = facility_fares.get(act_name)
                 if f_info:
-                    n_fare = int(f_info['normal'])
-                    if not has_ryusendo:
-                        c_fare = int(f_info['group'])
+                    n_fare_unit = int(f_info['normal'])
+                    c_fare_unit = int(f_info['group'])
+                    
+                    if act_name == '龍泉洞' and has_ryusendo:
+                        c_fare_unit = 0
+                        
+                    # 【サッパ船の特例ロジック】1名時は7600円、それ以外は人数掛け
+                    if "サッパ船" in act_name:
+                        if num_people == 1:
+                            n_fare_total = 7600
+                            c_fare_total = 7600
+                            breakdown.append(f"🎫 [体験・入場] {act_name} (1名利用特例) : 通常 ¥{n_fare_total:,} / 原価 ¥{c_fare_total:,}")
+                        else:
+                            n_fare_total = n_fare_unit * num_people
+                            c_fare_total = c_fare_unit * num_people
+                            breakdown.append(f"🎫 [体験・入場] {act_name} : 通常 ¥{n_fare_total:,} / 原価 ¥{c_fare_total:,}")
                     else:
-                        c_fare = 0
-                else:
-                    n_fare = 0
-                    c_fare = 0
-                breakdown.append(f"🏰 [施設入場] {spot} : 通常 ¥{n_fare:,} / 原価 ¥{c_fare:,}")
-                normal_total += n_fare
-                cost_total += c_fare
+                        n_fare_total = n_fare_unit * num_people
+                        c_fare_total = c_fare_unit * num_people
+                        breakdown.append(f"🎫 [体験・入場] {act_name} : 通常 ¥{n_fare_total:,} / 原価 ¥{c_fare_total:,}")
+                        
+                    normal_total += n_fare_total
+                    cost_total += c_fare_total
                         
     # 販売価格 (1割増し・10円単位で四捨五入)
     sales_price = int(round(cost_total * 1.1 / 10) * 10)
@@ -328,7 +338,7 @@ def find_routes_point_to_point(legs, trans_map, start_stop, start_time_min, targ
 
     return found_routes
 
-def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with_stay, sanriku_fares, other_fares, facility_fares):
+def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with_stay, sanriku_fares, other_fares, facility_fares, num_people):
     start_time_min = parse_time_to_min(start_time_str)
     all_perms = list(itertools.permutations(spots_with_stay))
     successful_plans = []
@@ -339,7 +349,7 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
         full_history = []
         is_possible = True
         
-        for spot_name, stay_min in perm:
+        for spot_name, stay_min, act_name in perm:
             routes = find_routes_point_to_point(legs, trans_map, cur_stop, cur_time, spot_name)
             if not routes:
                 is_possible = False
@@ -348,9 +358,11 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
             arr_time, route_hist = routes[0]
             full_history.extend(route_hist)
             leave_time = arr_time + stay_min
+            
             full_history.append({
                 'type': 'stay',
                 'spot': spot_name,
+                'activity': act_name,
                 'stay_min': stay_min,
                 'arr_time': arr_time,
                 'dep_time': leave_time
@@ -371,7 +383,8 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
         total_duration = final_arr_time - start_time_min
         order_names = " → ".join([s[0] for s in perm])
         
-        fares_calc = calculate_fares(full_history, sanriku_fares, other_fares, facility_fares)
+        # 利用人数を渡して運賃を計算
+        fares_calc = calculate_fares(full_history, sanriku_fares, other_fares, facility_fares, num_people)
         
         successful_plans.append({
             'order': order_names,
@@ -392,11 +405,14 @@ st.title("🚃 三陸じぶんの旅パス")
 st.caption("行きたい場所を選んで、ルート検索からチケット購入まで")
 
 with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=True):
-    col_d1, col_d2 = st.columns(2)
+    col_d1, col_d2, col_d3 = st.columns(3)
     with col_d1:
         travel_date = st.date_input("出発日", datetime.date.today())
     with col_d2:
         start_time = st.time_input("出発希望時刻", datetime.time(8, 30))
+    with col_d3:
+        # 利用人数の入力項目を追加
+        num_people = st.number_input("👤 利用人数（大人）", min_value=1, max_value=10, value=1, step=1)
         
     date_str = travel_date.strftime("%Y-%m-%d")
     start_time_str = start_time.strftime("%H:%M")
@@ -409,13 +425,15 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
         goal_station = st.selectbox("到着駅（最終目的地）", station_options, index=0)
 
     st.markdown("##### 📍 訪問スポットを選択")
+    
+    # 選択肢に「サッパ船」を追加
     available_spots = {
-        # 【変更点】目的地キーを「龍泉洞」に変更
-        "龍泉洞": {"label": "龍泉洞（岩泉小本駅接続）", "default": 60},
-        "奥浄土ヶ浜": {"label": "奥浄土ヶ浜（宮古駅接続）", "default": 40},
-        "出崎ふ頭": {"label": "出崎ふ頭・うみねこ丸乗船場（宮古駅接続）", "default": 40},
-        "北山崎展望台": {"label": "北山崎展望台（田野畑駅/普代駅接続）", "default": 45},
-        "島越港": {"label": "島越港・断崖クルーズ（島越駅接続）", "default": 60},
+        "龍泉洞": {"label": "龍泉洞（岩泉小本駅接続）", "default": 60, "activity": "龍泉洞"},
+        "奥浄土ヶ浜": {"label": "奥浄土ヶ浜（宮古駅接続）", "default": 40, "activity": None},
+        "出崎ふ頭": {"label": "出崎ふ頭・うみねこ丸乗船（宮古駅接続）", "default": 40, "activity": "宮古うみねこ丸"},
+        "北山崎展望台": {"label": "北山崎展望台（田野畑駅/普代駅接続）", "default": 45, "activity": None},
+        "島越港": {"label": "島越港・断崖クルーズ（島越駅接続）", "default": 60, "activity": "北山崎断崖クルーズ"},
+        "机浜": {"label": "机浜・サッパ船アドベンチャーズ（田野畑駅接続）", "default": 60, "activity": "北山崎サッパ船アドベンチャーズ"},
     }
 
     selected_spots_with_stay = []
@@ -426,7 +444,7 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
         with c_num:
             if checked:
                 stay = st.number_input(f"滞在(分)", min_value=15, max_value=240, value=info["default"], step=15, key=f"stay_{spot_key}")
-                selected_spots_with_stay.append((spot_key, stay))
+                selected_spots_with_stay.append((spot_key, stay, info["activity"]))
 
     search_btn = st.button("🔍 最適ルートを検索する", type="primary", use_container_width=True)
 
@@ -439,7 +457,9 @@ if search_btn:
             try:
                 legs, trans_map = load_data(FILE_PATH, date_str)
                 sanriku_fares, other_fares, facility_fares = load_fare_data(FILE_PATH)
-                plans = plan_tour(legs, trans_map, start_station, start_time_str, goal_station, selected_spots_with_stay, sanriku_fares, other_fares, facility_fares)
+                
+                # 人数を渡して計算
+                plans = plan_tour(legs, trans_map, start_station, start_time_str, goal_station, selected_spots_with_stay, sanriku_fares, other_fares, facility_fares, num_people)
                 
                 if not plans:
                     st.error(f"❌ {start_station}発 ➔ {goal_station}着 で当日中に移動できるルートが見つかりませんでした。出発時刻や滞在時間を調整してください。")
@@ -452,18 +472,17 @@ if search_btn:
                         with st.container(border=True):
                             st.markdown(f"### ⭐ プラン {idx}：{p['order']}")
                             
-                            # --- 料金サマリ表示 ---
                             col1, col2, col3 = st.columns(3)
                             with col1:
-                                st.metric("① 個別運賃の積上額", f"¥{n_fare:,}")
+                                st.metric(f"① 個別積上 ({num_people}名)", f"¥{n_fare:,}")
                             with col2:
-                                st.metric("② 手配原価（セット適用）", f"¥{c_fare:,}")
+                                st.metric(f"② 手配原価 ({num_people}名)", f"¥{c_fare:,}")
                             with col3:
-                                st.metric("③ 🎉 販売価格", f"¥{s_price:,}")
+                                st.metric(f"③ 🎉 販売価格 ({num_people}名)", f"¥{s_price:,}")
                                 
                             st.info(f"⏱ **総所要時間**: {p['total_duration']//60}時間{p['total_duration']%60}分 ｜ **区間**: {start_station} ({start_time_str}発) ➔ {goal_station} (**{min_to_str(p['final_arr_time'])}着**)")
                             
-                            with st.expander("💴 運賃計算の内訳を見る（0円の場合は設定不一致）"):
+                            with st.expander("💴 運賃・アクティビティ計算の内訳を見る"):
                                 for b in p['breakdown']:
                                     st.write(b)
                             
@@ -474,7 +493,10 @@ if search_btn:
                                 elif step['type'] == 'transfer':
                                     st.caption(f" 🚶 **徒歩・乗換 {step['duration']}分**: {step['from_stop']} ➔ {step['to_stop']}")
                                 elif step['type'] == 'stay':
-                                    st.success(f"★ **【観光・滞在】 {step['spot']}** （**{min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])}** / {step['stay_min']}分間）")
+                                    if step['activity']:
+                                        st.success(f"★ **【施設・体験】 {step['activity']}** （**{min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])}** / {step['stay_min']}分間）")
+                                    else:
+                                        st.success(f"★ **【観光・滞在】 {step['spot']}** （**{min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])}** / {step['stay_min']}分間）")
                     
                     st.divider()
                     if st.button("🔄 次の検索（条件を再設定する）", use_container_width=True):
