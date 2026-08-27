@@ -11,8 +11,8 @@ st.set_page_config(
     layout="wide"
 )
 
-# ※ご自身の環境に合わせてファイル名を確認してください
-FILE_PATH = "統合版・2026年三陸鉄道周辺ダイヤ_3.xlsx"
+# ファイル名
+FILE_PATH = "統合版・2026年三陸鉄道周辺ダイヤ_4.xlsx"
 
 # ==========================================
 # 1. データ読み込み＆探索ロジック
@@ -67,9 +67,14 @@ def load_data(filepath, target_date_str):
     target_dt = datetime.datetime.strptime(target_date_str, "%Y-%m-%d").date()
     all_legs = []
     
+    # 【変更点】シート名を新しい統一名称（岩手県北バス・岩泉町民バス）に対応
     sheet_line_map = {
         '三陸鉄道_北行': '三陸鉄道',
         '三陸鉄道_南行': '三陸鉄道',
+        '岩泉町民バス_西行': '岩泉町民バス',
+        '岩泉町民バス_東行': '岩泉町民バス',
+        '岩手県北バス_往路': '岩手県北バス',
+        '岩手県北バス_復路': '岩手県北バス',
         '龍泉洞バス_西行': '岩泉町民バス',
         '龍泉洞バス_東行': '岩泉町民バス',
         '浄土ヶ浜バス_往路': '岩手県北バス',
@@ -147,13 +152,6 @@ def load_data(filepath, target_date_str):
                         })
                         
     df_trans = pd.read_excel(filepath, sheet_name='乗換設定')
-    line_name_alias = {
-        '龍泉洞バス': '岩泉町民バス',
-        '浄土ヶ浜バス': '岩手県北バス'
-    }
-    df_trans['乗換元路線'] = df_trans['乗換元路線'].replace(line_name_alias)
-    df_trans['乗換先路線'] = df_trans['乗換先路線'].replace(line_name_alias)
-    
     trans_map = {}
     for _, r in df_trans.iterrows():
         k = (str(r['乗換元路線']).strip(), str(r['乗換元停留所・駅']).strip(),
@@ -203,7 +201,8 @@ def load_fare_data(filepath):
     return sanriku_fares, other_fares, facility_fares
 
 def calculate_fares(history, sanriku_fares, other_fares, facility_fares):
-    has_ryusendo = any(step.get('type') == 'stay' and step.get('spot') == '龍泉洞前' for step in history)
+    # 【変更点】龍泉洞前（バス停）ではなく「龍泉洞（施設）」への滞在で判定する
+    has_ryusendo = any(step.get('type') == 'stay' and step.get('spot') == '龍泉洞' for step in history)
     
     normal_total = 0
     cost_total = 0
@@ -245,7 +244,8 @@ def calculate_fares(history, sanriku_fares, other_fares, facility_fares):
             
         elif step['type'] == 'stay':
             spot = step['spot']
-            if spot == '龍泉洞前':
+            # 【変更点】施設名判定を「龍泉洞」に
+            if spot == '龍泉洞':
                 f_info = facility_fares.get('龍泉洞')
                 if f_info:
                     n_fare = int(f_info['normal'])
@@ -410,7 +410,8 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
 
     st.markdown("##### 📍 訪問スポットを選択")
     available_spots = {
-        "龍泉洞前": {"label": "龍泉洞（岩泉小本駅接続）", "default": 60},
+        # 【変更点】目的地キーを「龍泉洞」に変更
+        "龍泉洞": {"label": "龍泉洞（岩泉小本駅接続）", "default": 60},
         "奥浄土ヶ浜": {"label": "奥浄土ヶ浜（宮古駅接続）", "default": 40},
         "出崎ふ頭": {"label": "出崎ふ頭・うみねこ丸乗船場（宮古駅接続）", "default": 40},
         "北山崎展望台": {"label": "北山崎展望台（田野畑駅/普代駅接続）", "default": 45},
