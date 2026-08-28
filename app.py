@@ -11,6 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
+# ファイル名（GitHubにアップロードしている名前に合わせる）
 FILE_PATH = "統合版・2026年三陸鉄道周辺ダイヤ_4_2.xlsx"
 
 # ==========================================
@@ -73,10 +74,7 @@ def load_data(filepath, target_date_str):
         '岩泉町民バス_東行': '岩泉町民バス',
         '岩手県北バス_往路': '岩手県北バス',
         '岩手県北バス_復路': '岩手県北バス',
-        '龍泉洞バス_西行': '岩泉町民バス',
-        '龍泉洞バス_東行': '岩泉町民バス',
-        '浄土ヶ浜バス_往路': '岩手県北バス',
-        '浄土ヶ浜バス_復路': '岩手県北バス',
+        '岩泉町民バス_往路': '岩手県北バス', # ※Excelシート名の誤設定をカバーする安全装置
         '普代村営バス_往路': '普代村営バス',
         '普代村営バス_復路': '普代村営バス',
         '田野畑観光タクシー_行き': '田野畑観光タクシー',
@@ -158,6 +156,7 @@ def load_fare_data(filepath):
     
     xls = pd.ExcelFile(filepath)
     
+    # 1. 三鉄運賃
     if '三鉄_運賃三角表' in xls.sheet_names:
         df_sanriku = pd.read_excel(filepath, sheet_name='三鉄_運賃三角表', index_col=0)
         for row in df_sanriku.index:
@@ -170,14 +169,21 @@ def load_fare_data(filepath):
                     except:
                         pass
                         
+    # 2. 施設・アクティビティ料金
     if '施設料金' in xls.sheet_names:
         df_fac = pd.read_excel(filepath, sheet_name='施設料金')
         for _, row in df_fac.iterrows():
             name = str(row['施設・アクティビティ名']).strip()
+            nearest_stop = str(row['最寄り停留所']).strip()
             normal_f = float(row['通常料金']) if pd.notna(row['通常料金']) else 0
             group_f = float(row['団体・割引料金']) if pd.notna(row['団体・割引料金']) else normal_f
-            facility_fares[name] = {'normal': normal_f, 'group': group_f}
+            facility_fares[name] = {
+                'normal': normal_f, 
+                'group': group_f, 
+                'nearest_stop': nearest_stop
+            }
                     
+    # 3. 他社_通常料金（交通機関）
     if '他社_通常料金' in xls.sheet_names:
         df_other = pd.read_excel(filepath, sheet_name='他社_通常料金')
         for _, row in df_other.iterrows():
@@ -191,17 +197,15 @@ def load_fare_data(filepath):
             normal_f = float(row['運賃']) if pd.notna(row['運賃']) else 0
             group_f = float(row['団体']) if pd.notna(row['団体']) else normal_f
             
-            if f_stop == t_stop or (f_stop == 'nan' and t_stop == 'nan') or operator == '龍泉洞':
-                if operator not in facility_fares:
-                    facility_fares[operator] = {'normal': normal_f, 'group': group_f}
-            else:
+            # 発着地が異なる純粋な移動手段のみ登録
+            if f_stop != 'nan' and t_stop != 'nan' and f_stop != t_stop:
                 other_fares[(operator, f_stop, t_stop)] = {'normal': normal_f, 'group': group_f}
                 other_fares[(operator, t_stop, f_stop)] = {'normal': normal_f, 'group': group_f}
                 
     return sanriku_fares, other_fares, facility_fares
 
 def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_people):
-    has_ryusendo = any(step.get('type') == 'stay' and step.get('spot') == '龍泉洞' for step in history)
+    has_ryusendo = any(step.get('type') == 'stay' and step.get('activity') == '龍泉洞' for step in history)
     
     normal_total = 0
     cost_total = 0
@@ -265,8 +269,12 @@ def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_peo
                     else:
                         n_fare_total = n_fare_unit * num_people
                         c_fare_total = c_fare_unit * num_people
-                        breakdown.append(f"🎫 [体験・入場] {act_name} : 通常 ¥{n_fare_total:,} / 原価 ¥{c_fare_total:,}")
                         
+                        if n_fare_total > 0 or c_fare_total > 0:
+                            breakdown.append(f"🎫 [体験・入場] {act_name} : 通常 ¥{n_fare_total:,} / 原価 ¥{c_fare_total:,}")
+                        else:
+                            breakdown.append(f"🎫 [景勝地] {act_name} : 入場無料")
+                            
                     normal_total += n_fare_total
                     cost_total += c_fare_total
                         
@@ -286,7 +294,8 @@ def find_routes_point_to_point(legs, trans_map, start_stop, start_time_min, targ
         
         if cur_stop == target_stop:
             found_routes.append((cur_time, history))
-            if len(found_routes) >= 3:
+            # 早く到着する上位2件を取得
+            if len(found_routes) >= 2:
                 break
             continue
             
@@ -349,8 +358,15 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
         full_history = []
         is_possible = True
         
-        for spot_name, stay_min, act_name in perm:
-            routes = find_routes_point_to_point(legs, trans_map, cur_stop, cur_time, spot_name)
+        for spot_key, stay_min, act_name in perm:
+            # 【重要】施設情報から「最寄り停留所」を取得してターゲットにする
+            target_stop = spot_key
+            if act_name and act_name in facility_fares:
+                nearest = facility_fares[act_name].get('nearest_stop')
+                if nearest and nearest != 'nan':
+                    target_stop = nearest
+            
+            routes = find_routes_point_to_point(legs, trans_map, cur_stop, cur_time, target_stop)
             if not routes:
                 is_possible = False
                 break
@@ -361,13 +377,13 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
             
             full_history.append({
                 'type': 'stay',
-                'spot': spot_name,
+                'spot': target_stop,
                 'activity': act_name,
                 'stay_min': stay_min,
                 'arr_time': arr_time,
                 'dep_time': leave_time
             })
-            cur_stop = spot_name
+            cur_stop = target_stop
             cur_time = leave_time
             
         if not is_possible:
@@ -381,9 +397,11 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
         full_history.extend(ret_hist)
         
         total_duration = final_arr_time - start_time_min
-        order_names = " → ".join([s[0] for s in perm])
         
-        # 利用人数を渡して運賃を計算
+        # UI表示用の訪問順序テキスト
+        spot_names_only = [s[2] if s[2] else s[0] for s in perm]
+        order_names = " ➔ ".join(spot_names_only)
+        
         fares_calc = calculate_fares(full_history, sanriku_fares, other_fares, facility_fares, num_people)
         
         successful_plans.append({
@@ -411,7 +429,6 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
     with col_d2:
         start_time = st.time_input("出発希望時刻", datetime.time(8, 30))
     with col_d3:
-        # 利用人数の入力項目を追加
         num_people = st.number_input("👤 利用人数（大人）", min_value=1, max_value=10, value=1, step=1)
         
     date_str = travel_date.strftime("%Y-%m-%d")
@@ -426,12 +443,12 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
 
     st.markdown("##### 📍 訪問スポットを選択")
     
-    # 選択肢に「サッパ船」を追加
+    # 施設の名前をキーにし、activityにExcelの「施設・アクティビティ名」と一致させる
     available_spots = {
         "龍泉洞": {"label": "龍泉洞（岩泉小本駅接続）", "default": 60, "activity": "龍泉洞"},
-        "奥浄土ヶ浜": {"label": "奥浄土ヶ浜（宮古駅接続）", "default": 40, "activity": None},
-        "出崎ふ頭": {"label": "出崎ふ頭・うみねこ丸乗船（宮古駅接続）", "default": 40, "activity": "宮古うみねこ丸"},
-        "北山崎展望台": {"label": "北山崎展望台（田野畑駅/普代駅接続）", "default": 45, "activity": None},
+        "奥浄土ヶ浜": {"label": "奥浄土ヶ浜（宮古駅接続）", "default": 40, "activity": "奥浄土ヶ浜"},
+        "出崎ふ頭": {"label": "出崎ふ頭・うみねこ丸乗船（宮古駅接続）", "default": 40, "activity": "宮古うみねこ丸（出崎ふ頭周遊）"},
+        "北山崎展望台": {"label": "北山崎展望台（田野畑駅/普代駅接続）", "default": 45, "activity": "北山崎展望台"},
         "島越港": {"label": "島越港・断崖クルーズ（島越駅接続）", "default": 60, "activity": "北山崎断崖クルーズ"},
         "机浜": {"label": "机浜・サッパ船アドベンチャーズ（田野畑駅接続）", "default": 60, "activity": "北山崎サッパ船アドベンチャーズ"},
     }
@@ -458,7 +475,6 @@ if search_btn:
                 legs, trans_map = load_data(FILE_PATH, date_str)
                 sanriku_fares, other_fares, facility_fares = load_fare_data(FILE_PATH)
                 
-                # 人数を渡して計算
                 plans = plan_tour(legs, trans_map, start_station, start_time_str, goal_station, selected_spots_with_stay, sanriku_fares, other_fares, facility_fares, num_people)
                 
                 if not plans:
