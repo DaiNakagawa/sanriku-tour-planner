@@ -103,6 +103,10 @@ def load_data(filepath, target_date_str):
         '田野畑観光タクシー_行き': '田野畑観光タクシー',
         '田野畑観光タクシー_帰り': '田野畑観光タクシー',
         '宮古うみねこ丸便': '宮古うみねこ丸',
+        '琥珀_JRバス_往路': 'JRバス',
+        '琥珀_JRバス_復路': 'JRバス',
+        '琥珀_市民バス_往路': '久慈市民バス',
+        '琥珀_市民バス_復路': '久慈市民バス',
     }
     
     for sname, line_name in sheet_line_map.items():
@@ -491,7 +495,6 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
         for act_name in acts:
             info = facility_fares_raw[act_name]
             
-            # うみねこ丸の名称変更対応
             display_name = act_name
             if "湾内周遊" in act_name and "移動" in act_name:
                 display_name = "宮古うみねこ丸（湾内周遊＋移動（出崎ふ頭→浄土ヶ浜））"
@@ -517,6 +520,12 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
                     checked = st.checkbox(display_name, key=f"chk_{act_name}")
                 with c_num:
                     if checked:
+                        # 琥珀美術館や青の洞窟サッパ船のガイドメッセージ表示
+                        if "琥珀美術館" in act_name:
+                            st.caption("💡 バス停までの送迎時間（往復約20分）を含めて設定してください。")
+                        elif "青の洞窟サッパ船" in act_name:
+                            st.caption("💡 順番待ちの時間を含めて50分以上で設定してください。")
+                        
                         stay = st.number_input("滞在(分)", min_value=15, max_value=240, value=fixed_duration, step=15, key=f"stay_{act_name}")
                         selected_spots_with_stay.append((act_name, stay, act_name))
 
