@@ -90,7 +90,6 @@ def load_data(filepath, target_date_str):
     target_dt = datetime.datetime.strptime(target_date_str, "%Y-%m-%d").date()
     all_legs = []
     
-    # 路線マスタシートから動的にシート名と路線名を読み込む
     sheet_line_map = {}
     if '路線マスタ' in xls.sheet_names:
         df_master = pd.read_excel(filepath, sheet_name='路線マスタ')
@@ -169,7 +168,6 @@ def load_data(filepath, target_date_str):
         
         trans_map[(f_line, f_stop, t_line, t_stop)] = dur
         
-        # 逆方向が未定義なら同じ所要時間で自動双方向化
         reverse_k = (t_line, t_stop, f_line, f_stop)
         if reverse_k not in trans_map:
             trans_map[reverse_k] = dur
@@ -202,8 +200,12 @@ def load_fare_data(filepath):
             base_name = str(row['施設・アクティビティ名']).strip()
             district = str(row['地区']).strip() if pd.notna(row['地区']) else 'その他'
             nearest_stop = str(row['最寄り停留所']).strip() if pd.notna(row['最寄り停留所']) else 'nan'
-            normal_f = float(row['通常料金']) if pd.notna(row['通常料金']) else 0
-            group_f = float(row['団体・割引料金']) if pd.notna(row['団体・割引料金']) else normal_f
+            
+            normal_adult = float(row['通常料金']) if pd.notna(row['通常料金']) else 0
+            group_adult = float(row['団体・割引料金']) if pd.notna(row['団体・割引料金']) else normal_adult
+            
+            normal_child = float(row['小人']) if ('小人' in df_fac.columns and pd.notna(row['小人'])) else (normal_adult / 2.0)
+            group_child = float(row['小人・団体']) if ('小人・団体' in df_fac.columns and pd.notna(row['小人・団体'])) else normal_child
             
             name = base_name
             if name in facility_fares and nearest_stop != 'nan':
@@ -221,8 +223,10 @@ def load_fare_data(filepath):
 
             facility_fares[name] = {
                 'district': district,
-                'normal': normal_f, 
-                'group': group_f, 
+                'normal_adult': normal_adult, 
+                'group_adult': group_adult,
+                'normal_child': normal_child,
+                'group_child': group_child,
                 'nearest_stop': nearest_stop,
                 'is_fixed': is_fixed,
                 'fixed_duration': fixed_duration,
@@ -240,25 +244,43 @@ def load_fare_data(filepath):
             f_stop = str(row['出発地']).strip() if pd.notna(row['出発地']) else 'nan'
             t_stop = str(row['到着地']).strip() if pd.notna(row['到着地']) else 'nan'
             
-            normal_f = float(row['運賃']) if pd.notna(row['運賃']) else 0
-            group_f = float(row['団体']) if pd.notna(row['団体']) else normal_f
+            normal_adult = float(row['運賃']) if pd.notna(row['運賃']) else 0
+            group_adult = float(row['団体']) if pd.notna(row['団体']) else normal_adult
+            
+            normal_child = float(row['小人']) if ('小人' in df_other.columns and pd.notna(row['小人'])) else (normal_adult / 2.0)
+            group_child = normal_child
             
             if f_stop != 'nan' and t_stop != 'nan' and f_stop != t_stop:
-                other_fares[(operator, f_stop, t_stop)] = {'normal': normal_f, 'group': group_f}
-                other_fares[(operator, t_stop, f_stop)] = {'normal': normal_f, 'group': group_f}
+                other_fares[(operator, f_stop, t_stop)] = {
+                    'normal_adult': normal_adult, 'group_adult': group_adult,
+                    'normal_child': normal_child, 'group_child': group_child
+                }
+                other_fares[(operator, t_stop, f_stop)] = {
+                    'normal_adult': normal_adult, 'group_adult': group_adult,
+                    'normal_child': normal_child, 'group_child': group_child
+                }
                 
     return sanriku_fares, other_fares, facility_fares
 
-def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_people):
+def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_adults, num_children):
     has_ryusendo = any(step.get('type') == 'stay' and step.get('activity') == '龍泉洞' for step in history)
     
-    normal_total = 0
-    cost_total = 0
+    normal_adult_total = 0
+    normal_child_total = 0
+    cost_adult_total = 0
+    cost_child_total = 0
+    
     breakdown = []
     
     if has_ryusendo:
-        cost_total += 4000 * num_people
-        breakdown.append(f"🎟️ **【セット適用】岩泉龍泉洞１日フリーきっぷ: 原価 ¥4,000 × {num_people}名 = ¥{4000 * num_people:,}**")
+        cost_adult_total += 4000 * num_adults
+        cost_child_total += 2000 * num_children
+        detail_txt = []
+        if num_adults > 0:
+            detail_txt.append(f"大人 ¥4,000 × {num_adults}名 = ¥{4000 * num_adults:,}")
+        if num_children > 0:
+            detail_txt.append(f"小人 ¥2,000 × {num_children}名 = ¥{2000 * num_children:,}")
+        breakdown.append(f"🎟️ **【セット適用】岩泉龍泉洞１日フリーきっぷ: 原価合計 ¥{4000 * num_adults + 2000 * num_children:,}（{' ＋ '.join(detail_txt)}）**")
         
     for step in history:
         if step['type'] == 'ride':
@@ -266,64 +288,126 @@ def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_peo
             f_stop = step['from_stop']
             t_stop = step['to_stop']
             
-            n_fare_unit = 0
-            c_fare_unit = 0
-            
             if line == '三陸鉄道':
-                n_fare_unit = sanriku_fares.get((f_stop, t_stop), 0)
-                if not has_ryusendo:
-                    c_fare_unit = n_fare_unit
-                breakdown.append(f"🚆 [三陸鉄道] {f_stop} ➔ {t_stop} : 通常 ¥{n_fare_unit * num_people:,} / 原価 ¥{c_fare_unit * num_people:,}")
+                n_a = sanriku_fares.get((f_stop, t_stop), 0)
+                n_c = ((n_a + 19) // 20) * 10 if n_a > 0 else 0  # 鉄道小人半額端数切上
+                c_a = 0 if has_ryusendo else n_a
+                c_c = 0 if has_ryusendo else n_c
+                
+                sum_n = n_a * num_adults + n_c * num_children
+                sum_c = c_a * num_adults + c_c * num_children
+                
+                parts = []
+                if num_adults > 0:
+                    parts.append(f"大人 ¥{n_a:,}×{num_adults}")
+                if num_children > 0:
+                    parts.append(f"小人 ¥{n_c:,}×{num_children}")
+                breakdown.append(f"🚆 [三陸鉄道] {f_stop} ➔ {t_stop} : 通常 ¥{sum_n:,} ({', '.join(parts)}) / 原価 ¥{sum_c:,}")
+                
+                normal_adult_total += n_a * num_adults
+                normal_child_total += n_c * num_children
+                cost_adult_total += c_a * num_adults
+                cost_child_total += c_c * num_children
             else:
-                fare_info = other_fares.get((line, f_stop, t_stop))
-                if fare_info:
-                    n_fare_unit = int(fare_info['normal'])
-                    if has_ryusendo and line == '岩泉町民バス':
-                        c_fare_unit = 0
-                    else:
-                        c_fare_unit = int(fare_info['group'])
+                f_info = other_fares.get((line, f_stop, t_stop), {})
+                n_a = int(f_info.get('normal_adult', 0))
+                n_c = int(f_info.get('normal_child', 0))
+                
+                if has_ryusendo and line == '岩泉町民バス':
+                    c_a = 0
+                    c_c = 0
                 else:
-                    n_fare_unit = 0
-                    c_fare_unit = 0
-                breakdown.append(f"🚌 [{line}] {f_stop} ➔ {t_stop} : 通常 ¥{n_fare_unit * num_people:,} / 原価 ¥{c_fare_unit * num_people:,}")
-            
-            normal_total += n_fare_unit * num_people
-            cost_total += c_fare_unit * num_people
-            
+                    c_a = int(f_info.get('group_adult', n_a))
+                    c_c = int(f_info.get('group_child', n_c))
+                    
+                sum_n = n_a * num_adults + n_c * num_children
+                sum_c = c_a * num_adults + c_c * num_children
+                
+                parts = []
+                if num_adults > 0:
+                    parts.append(f"大人 ¥{n_a:,}×{num_adults}")
+                if num_children > 0:
+                    parts.append(f"小人 ¥{n_c:,}×{num_children}")
+                breakdown.append(f"🚌 [{line}] {f_stop} ➔ {t_stop} : 通常 ¥{sum_n:,} ({', '.join(parts)}) / 原価 ¥{sum_c:,}")
+                
+                normal_adult_total += n_a * num_adults
+                normal_child_total += n_c * num_children
+                cost_adult_total += c_a * num_adults
+                cost_child_total += c_c * num_children
+                
         elif step['type'] == 'stay':
             act_name = step.get('activity')
             if act_name:
-                f_info = facility_fares.get(act_name)
-                if f_info:
-                    n_fare_unit = int(f_info['normal'])
-                    c_fare_unit = int(f_info['group'])
+                f_info = facility_fares.get(act_name, {})
+                n_a = int(f_info.get('normal_adult', 0))
+                n_c = int(f_info.get('normal_child', 0))
+                c_a = int(f_info.get('group_adult', n_a))
+                c_c = int(f_info.get('group_child', n_c))
+                
+                if act_name == '龍泉洞' and has_ryusendo:
+                    c_a = 0
+                    c_c = 0
                     
-                    if act_name == '龍泉洞' and has_ryusendo:
-                        c_fare_unit = 0
-                        
-                    if "サッパ船" in act_name:
-                        if num_people == 1:
-                            n_fare_total = 7600
-                            c_fare_total = 7600
-                            breakdown.append(f"🎫 [体験・入場] {act_name} (1名利用特例) : 通常 ¥{n_fare_total:,} / 原価 ¥{c_fare_total:,}")
-                        else:
-                            n_fare_total = n_fare_unit * num_people
-                            c_fare_total = c_fare_unit * num_people
-                            breakdown.append(f"🎫 [体験・入場] {act_name} : 通常 ¥{n_fare_total:,} / 原価 ¥{c_fare_total:,}")
+                if "サッパ船" in act_name:
+                    total_people = num_adults + num_children
+                    if total_people == 1:
+                        sum_n = 7600
+                        sum_c = 7600
+                        normal_adult_total += 7600 if num_adults > 0 else 0
+                        normal_child_total += 7600 if num_children > 0 else 0
+                        cost_adult_total += 7600 if num_adults > 0 else 0
+                        cost_child_total += 7600 if num_children > 0 else 0
+                        breakdown.append(f"🎫 [体験・入場] {act_name} (1名利用特例) : 通常 ¥7,600 / 原価 ¥7,600")
                     else:
-                        n_fare_total = n_fare_unit * num_people
-                        c_fare_total = c_fare_unit * num_people
+                        sum_n = n_a * num_adults + n_c * num_children
+                        sum_c = c_a * num_adults + c_c * num_children
+                        normal_adult_total += n_a * num_adults
+                        normal_child_total += n_c * num_children
+                        cost_adult_total += c_a * num_adults
+                        cost_child_total += c_c * num_children
                         
-                        if n_fare_total > 0 or c_fare_total > 0:
-                            breakdown.append(f"🎫 [体験・入場] {act_name} : 通常 ¥{n_fare_total:,} / 原価 ¥{c_fare_total:,}")
-                        else:
-                            breakdown.append(f"🎫 [景勝地] {act_name} : 入場無料")
-                            
-                    normal_total += n_fare_total
-                    cost_total += c_fare_total
-                        
-    sales_price = int(round(cost_total * 1.1 / 10) * 10)
-    return int(normal_total), int(cost_total), sales_price, breakdown
+                        parts = []
+                        if num_adults > 0:
+                            parts.append(f"大人 ¥{n_a:,}×{num_adults}")
+                        if num_children > 0:
+                            parts.append(f"小人 ¥{n_c:,}×{num_children}")
+                        breakdown.append(f"🎫 [体験・入場] {act_name} : 通常 ¥{sum_n:,} ({', '.join(parts)}) / 原価 ¥{sum_c:,}")
+                else:
+                    sum_n = n_a * num_adults + n_c * num_children
+                    sum_c = c_a * num_adults + c_c * num_children
+                    normal_adult_total += n_a * num_adults
+                    normal_child_total += n_c * num_children
+                    cost_adult_total += c_a * num_adults
+                    cost_child_total += c_c * num_children
+                    
+                    if sum_n > 0 or sum_c > 0:
+                        parts = []
+                        if num_adults > 0:
+                            parts.append(f"大人 ¥{n_a:,}×{num_adults}")
+                        if num_children > 0:
+                            parts.append(f"小人 ¥{n_c:,}×{num_children}")
+                        breakdown.append(f"🎫 [体験・入場] {act_name} : 通常 ¥{sum_n:,} ({', '.join(parts)}) / 原価 ¥{sum_c:,}")
+                    else:
+                        breakdown.append(f"🎫 [景勝地] {act_name} : 入場無料")
+
+    normal_total = normal_adult_total + normal_child_total
+    cost_total = cost_adult_total + cost_child_total
+    sales_price_adult = int(round(cost_adult_total * 1.1 / 10) * 10) if num_adults > 0 else 0
+    sales_price_child = int(round(cost_child_total * 1.1 / 10) * 10) if num_children > 0 else 0
+    sales_price_total = sales_price_adult + sales_price_child
+
+    fare_dict = {
+        'normal_total': normal_total,
+        'normal_adult': normal_adult_total,
+        'normal_child': normal_child_total,
+        'cost_total': cost_total,
+        'cost_adult': cost_adult_total,
+        'cost_child': cost_child_total,
+        'sales_total': sales_price_total,
+        'sales_adult': sales_price_adult,
+        'sales_child': sales_price_child
+    }
+    return fare_dict, breakdown
 
 def find_routes_point_to_point(legs, trans_map, start_stop, start_time_min, target_stop, max_transfers=4):
     counter = 0
@@ -398,7 +482,7 @@ def find_routes_point_to_point(legs, trans_map, start_stop, start_time_min, targ
 
     return found_routes
 
-def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with_stay, sanriku_fares, other_fares, facility_fares, num_people):
+def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with_stay, sanriku_fares, other_fares, facility_fares, num_adults, num_children):
     start_time_min = parse_time_to_min(start_time_str)
     all_perms = list(itertools.permutations(spots_with_stay))
     successful_plans = []
@@ -451,15 +535,15 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
         spot_names_only = [s[2] if s[2] else s[0] for s in perm]
         order_names = " ➔ ".join(spot_names_only)
         
-        fares_calc = calculate_fares(full_history, sanriku_fares, other_fares, facility_fares, num_people)
+        fare_dict, breakdown = calculate_fares(full_history, sanriku_fares, other_fares, facility_fares, num_adults, num_children)
         
         successful_plans.append({
             'order': order_names,
             'final_arr_time': final_arr_time,
             'total_duration': total_duration,
             'history': full_history,
-            'fares': fares_calc[:3],
-            'breakdown': fares_calc[3]
+            'fares': fare_dict,
+            'breakdown': breakdown
         })
         
     successful_plans.sort(key=lambda x: x['final_arr_time'])
@@ -472,18 +556,21 @@ st.title("🚃 三陸海岸・じぶんの旅パス")
 st.caption("行きたい場所を選んで、ルート検索からチケット購入まで")
 
 with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=True):
-    col_d1, col_d2, col_d3 = st.columns(3)
+    col_d1, col_d2 = st.columns(2)
     with col_d1:
         travel_date = st.date_input("出発日", datetime.date.today())
     with col_d2:
         start_time = st.time_input("出発希望時刻", datetime.time(6, 30))
-    with col_d3:
-        num_people = st.number_input("👤 利用人数（大人）", min_value=1, max_value=10, value=1, step=1)
+        
+    col_p1, col_p2 = st.columns(2)
+    with col_p1:
+        num_adults = st.number_input("👤 大人人数（中学生以上）", min_value=0, max_value=10, value=1, step=1)
+    with col_p2:
+        num_children = st.number_input("🧒 小人人数（小学生）", min_value=0, max_value=10, value=0, step=1)
         
     date_str = travel_date.strftime("%Y-%m-%d")
     start_time_str = start_time.strftime("%H:%M")
 
-    # 「出発駅・到着駅一覧」シートから動的に駅リストを取得
     try:
         xls_obj = pd.ExcelFile(FILE_PATH)
         if '出発駅・到着駅一覧' in xls_obj.sheet_names:
@@ -551,7 +638,9 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
     search_btn = st.button("🔍 最適ルートを検索する", type="primary", use_container_width=True)
 
 if search_btn:
-    if not selected_spots_with_stay:
+    if num_adults + num_children == 0:
+        st.warning("⚠️ 利用人数（大人または小人）を1名以上設定してください。")
+    elif not selected_spots_with_stay:
         st.warning("⚠️ 訪問したい観光スポットを1つ以上選択してください。")
     else:
         with st.spinner("ダイヤと乗り継ぎ・運賃を最適化計算中..."):
@@ -559,30 +648,33 @@ if search_btn:
                 legs, trans_map = load_data(FILE_PATH, date_str)
                 sanriku_fares, other_fares, facility_fares = load_fare_data(FILE_PATH)
                 
-                plans = plan_tour(legs, trans_map, start_station, start_time_str, goal_station, selected_spots_with_stay, sanriku_fares, other_fares, facility_fares, num_people)
+                plans = plan_tour(legs, trans_map, start_station, start_time_str, goal_station, selected_spots_with_stay, sanriku_fares, other_fares, facility_fares, num_adults, num_children)
                 
                 if not plans:
                     st.error(f"❌ {start_station}発 ➔ {goal_station}着 で当日中に移動できるルートが見つかりませんでした。出発時刻や滞在時間を調整してください。")
                 else:
-                    st.success(f"🎉 **{len(plans)} 件**のルートが見つかりました！")
+                    st.success(f"🎉 **{len(plans)} 件**のルートが見つかりました！（大人: {num_adults}名, 小人: {num_children}名）")
                     
                     for idx, p in enumerate(plans, 1):
-                        n_fare, c_fare, s_price = p['fares']
+                        f = p['fares']
                         
                         with st.container(border=True):
                             st.markdown(f"### ⭐ プラン {idx}：{p['order']}")
                             
                             col1, col2, col3 = st.columns(3)
                             with col1:
-                                st.metric(f"① 個別積上 ({num_people}名)", f"¥{n_fare:,}")
+                                st.metric("① 個別積上合計", f"¥{f['normal_total']:,}")
+                                st.caption(f"内訳: 大人 ¥{f['normal_adult']:,} / 小人 ¥{f['normal_child']:,}")
                             with col2:
-                                st.metric(f"② 手配原価 ({num_people}名)", f"¥{c_fare:,}")
+                                st.metric("② 手配原価合計", f"¥{f['cost_total']:,}")
+                                st.caption(f"内訳: 大人 ¥{f['cost_adult']:,} / 小人 ¥{f['cost_child']:,}")
                             with col3:
-                                st.metric(f"③ 🎉 販売価格 ({num_people}名)", f"¥{s_price:,}")
+                                st.metric("③ 🎉 販売価格合計", f"¥{f['sales_total']:,}")
+                                st.caption(f"内訳: 大人 ¥{f['sales_adult']:,} / 小人 ¥{f['sales_child']:,}")
                                 
                             st.info(f"⏱ **総所要時間**: {p['total_duration']//60}時間{p['total_duration']%60}分 ｜ **区間**: {start_station} ({start_time_str}発) ➔ {goal_station} (**{min_to_str(p['final_arr_time'])}着**)")
                             
-                            with st.expander("💴 運賃・アクティビティ計算の内訳を見る"):
+                            with st.expander("💴 運賃・アクティビティ計算の内訳（大人・小人別）を見る"):
                                 for b in p['breakdown']:
                                     st.write(b)
                             
