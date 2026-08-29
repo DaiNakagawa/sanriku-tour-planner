@@ -192,7 +192,6 @@ def load_fare_data(filepath):
                     except:
                         pass
                         
-    # 施設料金シートの読み込み（エクセルの「所要時間固定」「所要時間」列を完全に連動）
     if '施設料金' in xls.sheet_names:
         df_fac = pd.read_excel(filepath, sheet_name='施設料金')
         for _, row in df_fac.iterrows():
@@ -491,29 +490,34 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
         st.markdown(f"**📌 【 {dist} 地区 】**")
         for act_name in acts:
             info = facility_fares_raw[act_name]
-            nearest = info['nearest_stop']
-            nearest_text = f"（最寄り: {nearest}）" if nearest and nearest != 'nan' else ""
             
+            # うみねこ丸の名称変更対応
+            display_name = act_name
+            if "湾内周遊" in act_name and "移動" in act_name:
+                display_name = "宮古うみねこ丸（湾内周遊＋移動（出崎ふ頭→浄土ヶ浜））"
+            elif act_name == "宮古うみねこ丸（片道移動）":
+                display_name = "宮古うみねこ丸（片道移動（出崎ふ頭→浄土ヶ浜））"
+            elif act_name == "宮古うみねこ丸（全体周遊クルーズ）":
+                display_name = "宮古うみねこ丸（全体周遊クルーズ・出崎ふ頭発）"
+
             is_fixed = info['is_fixed']
             fixed_duration = info['fixed_duration']
             
             if is_fixed:
-                label_text = f"{act_name}{nearest_text} <span style='color:gray; font-size:0.9em;'>(標準所要時間: {fixed_duration}分)</span>"
                 c_chk, c_dummy = st.columns([3, 2])
                 with c_chk:
-                    checked = st.checkbox(label_text, key=f"chk_{act_name}", help=f"所要時間固定 ({fixed_duration}分)")
+                    checked = st.checkbox(display_name, key=f"chk_{act_name}")
                 with c_dummy:
                     if checked:
-                        st.markdown(f"<div style='padding-top:5px; color:#555;'>⏱ 標準所要時間: <b>{fixed_duration}分</b></div>", unsafe_allow_html=True)
+                        st.caption(f"⏱ 標準所要時間: {fixed_duration}分")
                         selected_spots_with_stay.append((act_name, fixed_duration, act_name))
             else:
-                label_text = f"{act_name}{nearest_text}"
                 c_chk, c_num = st.columns([3, 2])
                 with c_chk:
-                    checked = st.checkbox(label_text, key=f"chk_{act_name}")
+                    checked = st.checkbox(display_name, key=f"chk_{act_name}")
                 with c_num:
                     if checked:
-                        stay = st.number_input(f"滞在(分)", min_value=15, max_value=240, value=fixed_duration, step=15, key=f"stay_{act_name}")
+                        stay = st.number_input("滞在(分)", min_value=15, max_value=240, value=fixed_duration, step=15, key=f"stay_{act_name}")
                         selected_spots_with_stay.append((act_name, stay, act_name))
 
     search_btn = st.button("🔍 最適ルートを検索する", type="primary", use_container_width=True)
