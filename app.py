@@ -174,10 +174,12 @@ def load_fare_data(filepath):
         df_fac = pd.read_excel(filepath, sheet_name='施設料金')
         for _, row in df_fac.iterrows():
             name = str(row['施設・アクティビティ名']).strip()
-            nearest_stop = str(row['最寄り停留所']).strip()
+            district = str(row['地区']).strip() if pd.notna(row['地区']) else 'その他'
+            nearest_stop = str(row['最寄り停留所']).strip() if pd.notna(row['最寄り停留所']) else 'nan'
             normal_f = float(row['通常料金']) if pd.notna(row['通常料金']) else 0
             group_f = float(row['団体・割引料金']) if pd.notna(row['団体・割引料金']) else normal_f
             facility_fares[name] = {
+                'district': district,
                 'normal': normal_f, 
                 'group': group_f, 
                 'nearest_stop': nearest_stop
@@ -197,7 +199,6 @@ def load_fare_data(filepath):
             normal_f = float(row['運賃']) if pd.notna(row['運賃']) else 0
             group_f = float(row['団体']) if pd.notna(row['団体']) else normal_f
             
-            # 発着地が異なる純粋な移動手段のみ登録
             if f_stop != 'nan' and t_stop != 'nan' and f_stop != t_stop:
                 other_fares[(operator, f_stop, t_stop)] = {'normal': normal_f, 'group': group_f}
                 other_fares[(operator, t_stop, f_stop)] = {'normal': normal_f, 'group': group_f}
@@ -256,7 +257,6 @@ def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_peo
                     if act_name == '龍泉洞' and has_ryusendo:
                         c_fare_unit = 0
                         
-                    # 【サッパ船の特例ロジック】1名時は7600円、それ以外は人数掛け
                     if "サッパ船" in act_name:
                         if num_people == 1:
                             n_fare_total = 7600
@@ -278,9 +278,7 @@ def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_peo
                     normal_total += n_fare_total
                     cost_total += c_fare_total
                         
-    # 販売価格 (1割増し・10円単位で四捨五入)
     sales_price = int(round(cost_total * 1.1 / 10) * 10)
-    
     return int(normal_total), int(cost_total), sales_price, breakdown
 
 def find_routes_point_to_point(legs, trans_map, start_stop, start_time_min, target_stop, max_transfers=4):
@@ -294,7 +292,6 @@ def find_routes_point_to_point(legs, trans_map, start_stop, start_time_min, targ
         
         if cur_stop == target_stop:
             found_routes.append((cur_time, history))
-            # 早く到着する上位2件を取得
             if len(found_routes) >= 2:
                 break
             continue
@@ -359,7 +356,6 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
         is_possible = True
         
         for spot_key, stay_min, act_name in perm:
-            # 【重要】施設情報から「最寄り停留所」を取得してターゲットにする
             target_stop = spot_key
             if act_name and act_name in facility_fares:
                 nearest = facility_fares[act_name].get('nearest_stop')
@@ -398,7 +394,6 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
         
         total_duration = final_arr_time - start_time_min
         
-        # UI表示用の訪問順序テキスト
         spot_names_only = [s[2] if s[2] else s[0] for s in perm]
         order_names = " ➔ ".join(spot_names_only)
         
@@ -443,25 +438,55 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
 
     st.markdown("##### 📍 訪問スポットを選択")
     
-    # 施設の名前をキーにし、activityにExcelの「施設・アクティビティ名」と一致させる
-    available_spots = {
-        "龍泉洞": {"label": "龍泉洞（岩泉小本駅接続）", "default": 60, "activity": "龍泉洞"},
-        "奥浄土ヶ浜": {"label": "奥浄土ヶ浜（宮古駅接続）", "default": 40, "activity": "奥浄土ヶ浜"},
-        "出崎ふ頭": {"label": "出崎ふ頭・うみねこ丸乗船（宮古駅接続）", "default": 40, "activity": "宮古うみねこ丸（出崎ふ頭周遊）"},
-        "北山崎展望台": {"label": "北山崎展望台（田野畑駅/普代駅接続）", "default": 45, "activity": "北山崎展望台"},
-        "島越港": {"label": "島越港・断崖クルーズ（島越駅接続）", "default": 60, "activity": "北山崎断崖クルーズ"},
-        "机浜": {"label": "机浜・サッパ船アドベンチャーズ（田野畑駅接続）", "default": 60, "activity": "北山崎サッパ船アドベンチャーズ"},
+    # 動的にExcelの「施設料金」シートからデータを取得し、地区ごとに整理する
+    try:
+        _, _, facility_fares_raw = load_fare_data(FILE_PATH)
+    except:
+        facility_fares_raw = {}
+
+    # デフォルトの標準滞在時間マッピング（必要に応じて調整可能）
+    default_stays = {
+        "龍泉洞": 60,
+        "奥浄土ヶ浜": 40,
+        "宮古うみねこ丸（出崎ふ頭周遊）": 40,
+        "宮古うみねこ丸（浄土ヶ浜周遊）": 40,
+        "青の洞窟サッパ船": 50,
+        "宮古市内観光": 60,
+        "北山崎断崖クルーズ": 60,
+        "北山崎サッパ船アドベンチャーズ": 60,
+        "北山崎展望台": 45,
+        "琥珀美術館": 60,
+        "久慈市内観光": 60,
     }
 
+    # 地区ごとに施設をグループ化
+    district_groups = {}
+    for act_name, info in facility_fares_raw.items():
+        dist = info['district']
+        if dist not in district_groups:
+            district_groups[dist] = []
+        district_groups[dist].append(act_name)
+
     selected_spots_with_stay = []
-    for spot_key, info in available_spots.items():
-        c_chk, c_num = st.columns([3, 2])
-        with c_chk:
-            checked = st.checkbox(info["label"], key=f"chk_{spot_key}")
-        with c_num:
-            if checked:
-                stay = st.number_input(f"滞在(分)", min_value=15, max_value=240, value=info["default"], step=15, key=f"stay_{spot_key}")
-                selected_spots_with_stay.append((spot_key, stay, info["activity"]))
+
+    # 地区ごとにタブやセクション、エクスパンダーで分けて表示
+    for dist, acts in district_groups.items():
+        st.markdown(f"**📌 【 {dist} 地区 】**")
+        for act_name in acts:
+            info = facility_fares_raw[act_name]
+            nearest = info['nearest_stop']
+            nearest_text = f"（最寄り: {nearest}）" if nearest and nearest != 'nan' else ""
+            label_text = f"{act_name}{nearest_text}"
+            def_val = default_stays.get(act_name, 60)
+            
+            c_chk, c_num = st.columns([3, 2])
+            with c_chk:
+                checked = st.checkbox(label_text, key=f"chk_{act_name}")
+            with c_num:
+                if checked:
+                    stay = st.number_input(f"滞在(分)", min_value=15, max_value=240, value=def_val, step=15, key=f"stay_{act_name}")
+                    # 施設名をキーとして渡す（act_nameをspot_keyおよびactivityとして利用）
+                    selected_spots_with_stay.append((act_name, stay, act_name))
 
     search_btn = st.button("🔍 最適ルートを検索する", type="primary", use_container_width=True)
 
