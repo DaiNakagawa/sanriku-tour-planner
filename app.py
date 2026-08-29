@@ -6,7 +6,7 @@ import heapq
 
 # ページ設定
 st.set_page_config(
-    page_title="三陸じぶんの旅パス",
+    page_title="三陸海岸・じぶんの旅パス",
     page_icon="🚃",
     layout="wide"
 )
@@ -478,7 +478,7 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
 # ==========================================
 # 2. UI 表示
 # ==========================================
-st.title("🚃 三陸じぶんの旅パス")
+st.title("🚃 三陸海岸・じぶんの旅パス")
 st.caption("行きたい場所を選んで、ルート検索からチケット購入まで")
 
 with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=True):
