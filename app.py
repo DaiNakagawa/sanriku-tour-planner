@@ -178,7 +178,6 @@ def load_data(filepath, target_date_str):
         
         trans_map[(f_line, f_stop, t_line, t_stop)] = dur
         
-        # 逆方向が定義されていない場合は自動的に同じ所要時間で双方向化
         reverse_k = (t_line, t_stop, f_line, f_stop)
         if reverse_k not in trans_map:
             trans_map[reverse_k] = dur
@@ -214,7 +213,6 @@ def load_fare_data(filepath):
             normal_f = float(row['通常料金']) if pd.notna(row['通常料金']) else 0
             group_f = float(row['団体・割引料金']) if pd.notna(row['団体・割引料金']) else normal_f
             
-            # 同名施設（琥珀美術館など）が複数ある場合は最寄り停留所名を付与して区別
             name = base_name
             if name in facility_fares and nearest_stop != 'nan':
                 name = f"{base_name}（{nearest_stop}経由）"
@@ -371,7 +369,6 @@ def find_routes_point_to_point(legs, trans_map, start_stop, start_time_min, targ
                     counter += 1
                     heapq.heappush(queue, (cur_time + dur, num_trans, counter, t_stop, t_line, new_hist))
                 
-        # 久慈駅と久慈駅前の自動接続ブリッジ
         if cur_stop in ["久慈", "久慈駅"]:
             target_equiv = "久慈駅" if cur_stop == "久慈" else "久慈"
             trans_event = {
@@ -520,13 +517,8 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
         for act_name in acts:
             info = facility_fares_raw[act_name]
             
+            # エクセルの施設名をそのまま表示名として使用する
             display_name = act_name
-            if "湾内周遊" in act_name and "移動" in act_name:
-                display_name = "宮古うみねこ丸（湾内周遊＋移動（出崎ふ頭→浄土ヶ浜））"
-            elif act_name == "宮古うみねこ丸（片道移動）":
-                display_name = "宮古うみねこ丸（片道移動（出崎ふ頭→浄土ヶ浜））"
-            elif act_name == "宮古うみねこ丸（全体周遊クルーズ）":
-                display_name = "宮古うみねこ丸（全体周遊クルーズ・出崎ふ頭発）"
 
             is_fixed = info['is_fixed']
             fixed_duration = info['fixed_duration']
@@ -545,8 +537,8 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
                     checked = st.checkbox(display_name, key=f"chk_{act_name}")
                 with c_num:
                     if checked:
-                        # 琥珀美術館や青の洞窟サッパ船の注意書き表示
-                        if "琥珀美術館" in act_name:
+                        # 琥珀博物館や青の洞窟サッパ船の注意書き表示
+                        if "琥珀博物館" in act_name:
                             st.caption("💡 バス停までの送迎時間（往復約20分）を含めて設定してください。")
                         elif "青の洞窟サッパ船" in act_name:
                             st.caption("💡 順番待ちの時間を含めて50分以上で設定してください。")
