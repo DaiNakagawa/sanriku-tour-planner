@@ -268,7 +268,7 @@ def load_fare_data(filepath):
     return sanriku_fares, other_fares, facility_fares
 
 def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_adults, num_children):
-    has_ryusendo = any(step.get('type') == 'stay' and step.get('activity') == '龍泉洞' for step in history)
+    has_ryusendo = any(step.get('type'] == 'stay' and step.get('activity') == '龍泉洞' for step in history)
     
     normal_adult_total = 0
     normal_child_total = 0
@@ -326,20 +326,16 @@ def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_adu
                     c_c = int(f_info.get('group_child', n_c))
                     
                 capacity_str = f_info.get('capacity', '')
-                
-                # タクシー等の定員（4人ごとに1台加算など）の判定
                 total_people = num_adults + num_children
+                
                 if '1台' in capacity_str or '人' in capacity_str:
                     nums = re.findall(r'\d+', capacity_str)
                     cap = int(nums[0]) if nums else 4
                     vehicles = (total_people + cap - 1) // cap if total_people > 0 else 0
                     
-                    # 1台あたりの料金を全乗客でシェア / または車両単位の計算
-                    # ここでは車両数分の基本料金として計上し、大人・小人に按分または合算
                     sum_n = n_a * vehicles
                     sum_c = c_a * vehicles
                     
-                    # 原価・通常に反映
                     normal_adult_total += sum_n if num_adults > 0 else 0
                     normal_child_total += 0
                     cost_adult_total += sum_c if num_adults > 0 else 0
@@ -377,14 +373,33 @@ def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_adu
                     
                 if "サッパ船" in act_name:
                     total_people = num_adults + num_children
-                    if total_people == 1:
+                    if total_people <= 2:
+                        # 1名または2名利用時は最低7600円
                         sum_n = 7600
                         sum_c = 7600
-                        normal_adult_total += 7600 if num_adults > 0 else 0
-                        normal_child_total += 7600 if num_children > 0 else 0
-                        cost_adult_total += 7600 if num_adults > 0 else 0
-                        cost_child_total += 7600 if num_children > 0 else 0
-                        breakdown.append(f"🎫 [体験・入場] {act_name} (1名利用特例) : 通常 ¥7,600 / 原価 ¥7,600")
+                        
+                        # 大人・小人への按分または計上
+                        share_a = n_a * num_adults
+                        share_c = n_c * num_children
+                        base_sum = share_a + share_c
+                        if base_sum > 0:
+                            alloc_a = int(round(7600 * (share_a / base_sum)))
+                            alloc_c = 7600 - alloc_a
+                        else:
+                            alloc_a = 7600 if num_adults > 0 else 0
+                            alloc_c = 7600 if num_children > 0 else 0
+                            
+                        normal_adult_total += alloc_a
+                        normal_child_total += alloc_c
+                        cost_adult_total += alloc_a
+                        cost_child_total += alloc_c
+                        
+                        parts = []
+                        if num_adults > 0:
+                            parts.append(f"大人 ¥{alloc_a:,}")
+                        if num_children > 0:
+                            parts.append(f"小人 ¥{alloc_c:,}")
+                        breakdown.append(f"🎫 [体験・入場] {act_name} (1〜2名最低料金適用) : 通常 ¥7,600 ({', '.join(parts)}) / 原価 ¥7,600")
                     else:
                         sum_n = n_a * num_adults + n_c * num_children
                         sum_c = c_a * num_adults + c_c * num_children
@@ -699,7 +714,7 @@ if search_btn:
                                 st.metric("③ 🎉 販売価格合計", f"¥{f['sales_total']:,}")
                                 st.caption(f"内訳: 大人 ¥{f['sales_adult']:,} / 小人 ¥{f['sales_child']:,}")
                                 
-                            st.info(f"⏱ **総所要時間**: {p['total_duration']//60}時間{p['total_duration']%60}分 ｜ **区間**: {start_station} ({start_time_str}発) ➔ {goal_station} (**{min_to_str(p['final_arr_time'])}着**)")
+                            st.info(f"⏱ **総所要時間**: {p['total_duration']//60}時間{p['total_duration%60']}分 ｜ **区間**: {start_station} ({start_time_str}発) ➔ {goal_station} (**{min_to_str(p['final_arr_time'])}着**)")
                             
                             with st.expander("💴 運賃・アクティビティ計算の内訳（大人・小人別）を見る"):
                                 for b in p['breakdown']:
