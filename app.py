@@ -90,24 +90,15 @@ def load_data(filepath, target_date_str):
     target_dt = datetime.datetime.strptime(target_date_str, "%Y-%m-%d").date()
     all_legs = []
     
-    sheet_line_map = {
-        '三陸鉄道_北行': '三陸鉄道',
-        '三陸鉄道_南行': '三陸鉄道',
-        '岩泉町民バス_西行': '岩泉町民バス',
-        '岩泉町民バス_東行': '岩泉町民バス',
-        '岩手県北バス_往路': '岩手県北バス',
-        '岩手県北バス_復路': '岩手県北バス',
-        '岩泉町民バス_往路': '岩手県北バス',
-        '普代村営バス_往路': '普代村営バス',
-        '普代村営バス_復路': '普代村営バス',
-        '田野畑観光タクシー_行き': '田野畑観光タクシー',
-        '田野畑観光タクシー_帰り': '田野畑観光タクシー',
-        '宮古うみねこ丸便': '宮古うみねこ丸',
-        '琥珀_JRバス_往路': 'JRバス',
-        '琥珀_JRバス_復路': 'JRバス',
-        '琥珀_市民バス_往路': '久慈市民バス',
-        '琥珀_市民バス_復路': '久慈市民バス',
-    }
+    # 路線マスタシートから動的にシート名と路線名を読み込む
+    sheet_line_map = {}
+    if '路線マスタ' in xls.sheet_names:
+        df_master = pd.read_excel(filepath, sheet_name='路線マスタ')
+        col_s = df_master.columns[0]
+        col_l = df_master.columns[1]
+        for _, r in df_master.iterrows():
+            if pd.notna(r[col_s]) and pd.notna(r[col_l]):
+                sheet_line_map[str(r[col_s]).strip()] = str(r[col_l]).strip()
     
     for sname, line_name in sheet_line_map.items():
         if sname not in xls.sheet_names:
@@ -178,6 +169,7 @@ def load_data(filepath, target_date_str):
         
         trans_map[(f_line, f_stop, t_line, t_stop)] = dur
         
+        # 逆方向が未定義なら同じ所要時間で自動双方向化
         reverse_k = (t_line, t_stop, f_line, f_stop)
         if reverse_k not in trans_map:
             trans_map[reverse_k] = dur
@@ -225,8 +217,6 @@ def load_fare_data(filepath):
                 fixed_duration = parse_duration_to_min(row['所要時間'])
                     
             remark = str(row['備考']) if '備考' in df_fac.columns and pd.notna(row['備考']) else ''
-            
-            # エクセルの「説明」列を読み込む
             description = str(row['説明']) if '説明' in df_fac.columns and pd.notna(row['説明']) else ''
 
             facility_fares[name] = {
@@ -493,7 +483,17 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
     date_str = travel_date.strftime("%Y-%m-%d")
     start_time_str = start_time.strftime("%H:%M")
 
-    station_options = ["宮古", "久慈", "釜石", "盛"]
+    # 「出発駅・到着駅一覧」シートから動的に駅リストを取得
+    try:
+        xls_obj = pd.ExcelFile(FILE_PATH)
+        if '出発駅・到着駅一覧' in xls_obj.sheet_names:
+            df_st = pd.read_excel(FILE_PATH, sheet_name='出発駅・到着駅一覧')
+            station_options = df_st[df_st.columns[0]].dropna().astype(str).tolist()
+        else:
+            station_options = ["宮古", "久慈", "釜石", "盛"]
+    except Exception:
+        station_options = ["宮古", "久慈", "釜石", "盛"]
+
     col_s1, col_s2 = st.columns(2)
     with col_s1:
         start_station = st.selectbox("出発駅（起点）", station_options, index=0)
@@ -524,7 +524,7 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
 
             is_fixed = info['is_fixed']
             fixed_duration = info['fixed_duration']
-            description = info['description'] # エクセルの説明列のテキスト
+            description = info['description']
             
             if is_fixed:
                 c_chk, c_dummy = st.columns([3, 2])
@@ -532,7 +532,6 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
                     checked = st.checkbox(display_name, key=f"chk_{act_name}")
                 with c_dummy:
                     if checked:
-                        # 固定所要時間の場合でも説明文（description）があれば表示する
                         if description and description != 'nan':
                             st.caption(f"💡 {description}")
                         st.caption(f"⏱ 標準所要時間: {fixed_duration}分")
