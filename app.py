@@ -226,7 +226,7 @@ def load_fare_data(filepath):
                     
             remark = str(row['備考']) if '備考' in df_fac.columns and pd.notna(row['備考']) else ''
             
-            # エクセルの「説明」列を読み込む（存在しない場合は空文字）
+            # エクセルの「説明」列を読み込む
             description = str(row['説明']) if '説明' in df_fac.columns and pd.notna(row['説明']) else ''
 
             facility_fares[name] = {
@@ -532,6 +532,9 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
                     checked = st.checkbox(display_name, key=f"chk_{act_name}")
                 with c_dummy:
                     if checked:
+                        # 固定所要時間の場合でも説明文（description）があれば表示する
+                        if description and description != 'nan':
+                            st.caption(f"💡 {description}")
                         st.caption(f"⏱ 標準所要時間: {fixed_duration}分")
                         selected_spots_with_stay.append((act_name, fixed_duration, act_name))
             else:
@@ -540,7 +543,6 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
                     checked = st.checkbox(display_name, key=f"chk_{act_name}")
                 with c_num:
                     if checked:
-                        # エクセルの「説明」列に記述がある場合、そのままキャプションとして表示する
                         if description and description != 'nan':
                             st.caption(f"💡 {description}")
                         
