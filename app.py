@@ -170,9 +170,18 @@ def load_data(filepath, target_date_str):
     df_trans = pd.read_excel(filepath, sheet_name='乗換設定')
     trans_map = {}
     for _, r in df_trans.iterrows():
-        k = (str(r['乗換元路線']).strip(), str(r['乗換元停留所・駅']).strip(),
-             str(r['乗換先路線']).strip(), str(r['乗換先停留所・駅']).strip())
-        trans_map[k] = int(r['所要時間（分）'])
+        f_line = str(r['乗換元路線']).strip()
+        f_stop = str(r['乗換元停留所・駅']).strip()
+        t_line = str(r['乗換先路線']).strip()
+        t_stop = str(r['乗換先停留所・駅']).strip()
+        dur = int(r['所要時間（分）'])
+        
+        trans_map[(f_line, f_stop, t_line, t_stop)] = dur
+        
+        # 逆方向が定義されていない場合は自動的に同じ所要時間で双方向化
+        reverse_k = (t_line, t_stop, f_line, f_stop)
+        if reverse_k not in trans_map:
+            trans_map[reverse_k] = dur
         
     return all_legs, trans_map
 
@@ -199,11 +208,16 @@ def load_fare_data(filepath):
     if '施設料金' in xls.sheet_names:
         df_fac = pd.read_excel(filepath, sheet_name='施設料金')
         for _, row in df_fac.iterrows():
-            name = str(row['施設・アクティビティ名']).strip()
+            base_name = str(row['施設・アクティビティ名']).strip()
             district = str(row['地区']).strip() if pd.notna(row['地区']) else 'その他'
             nearest_stop = str(row['最寄り停留所']).strip() if pd.notna(row['最寄り停留所']) else 'nan'
             normal_f = float(row['通常料金']) if pd.notna(row['通常料金']) else 0
             group_f = float(row['団体・割引料金']) if pd.notna(row['団体・割引料金']) else normal_f
+            
+            # 同名施設（琥珀美術館など）が複数ある場合は最寄り停留所名を付与して区別
+            name = base_name
+            if name in facility_fares and nearest_stop != 'nan':
+                name = f"{base_name}（{nearest_stop}経由）"
             
             is_fixed_raw = str(row['所要時間固定']).strip() if '所要時間固定' in df_fac.columns and pd.notna(row['所要時間固定']) else ''
             is_fixed = (is_fixed_raw == '固定')
@@ -357,6 +371,17 @@ def find_routes_point_to_point(legs, trans_map, start_stop, start_time_min, targ
                     counter += 1
                     heapq.heappush(queue, (cur_time + dur, num_trans, counter, t_stop, t_line, new_hist))
                 
+        # 久慈駅と久慈駅前の自動接続ブリッジ
+        if cur_stop in ["久慈", "久慈駅"]:
+            target_equiv = "久慈駅" if cur_stop == "久慈" else "久慈"
+            trans_event = {
+                'type': 'transfer',
+                'from_stop': cur_stop, 'from_line': cur_line,
+                'to_stop': target_equiv, 'to_line': None,
+                'duration': 5, 'start_time': cur_time, 'end_time': cur_time + 5
+            }
+            possible_starts.append((target_equiv, None, cur_time + 5, trans_event))
+
         for p_stop, p_line, ready_time, trans_info in possible_starts:
             for leg in legs:
                 if leg['from_stop'] == p_stop and (p_line is None or leg['line'] == p_line):
@@ -520,7 +545,7 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
                     checked = st.checkbox(display_name, key=f"chk_{act_name}")
                 with c_num:
                     if checked:
-                        # 琥珀美術館や青の洞窟サッパ船のガイドメッセージ表示
+                        # 琥珀美術館や青の洞窟サッパ船の注意書き表示
                         if "琥珀美術館" in act_name:
                             st.caption("💡 バス停までの送迎時間（往復約20分）を含めて設定してください。")
                         elif "青の洞窟サッパ船" in act_name:
