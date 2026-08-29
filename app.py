@@ -598,6 +598,8 @@ st.caption("行きたい場所を選んで、ルート検索からチケット�
 # Session State 初期化
 if 'confirm_plan' not in st.session_state:
     st.session_state.confirm_plan = None
+if 'plans_cache' not in st.session_state:
+    st.session_state.plans_cache = None
 
 # 購入確認画面
 if st.session_state.confirm_plan is not None:
@@ -624,7 +626,6 @@ if st.session_state.confirm_plan is not None:
     st.markdown("#### 🎫 このパスに含まれる交通機関・施設・アクティビティ")
     st.markdown("このパスには、次の交通機関・施設・アクティビティの運賃が含まれています。")
     
-    # パスに含まれる交通機関・施設リストの抽出
     included_lines = set()
     included_spots = []
     for step in p['history']:
@@ -655,11 +656,12 @@ if st.session_state.confirm_plan is not None:
             st.success("✅ ご予約・ご購入手続きへ進みます。ご利用ありがとうございました！")
             if st.button("🔄 最初からやり直す", use_container_width=True):
                 st.session_state.confirm_plan = None
+                st.session_state.plans_cache = None
                 st.rerun()
 
 else:
-    # 検索画面
-    with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=True):
+    # 検索画面（設定 expander は検索結果がない時や条件変更時に開く）
+    with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=(st.session_state.plans_cache is None)):
         col_d1, col_d2 = st.columns(2)
         with col_d1:
             travel_date = st.date_input("出発日", datetime.date.today())
@@ -753,54 +755,70 @@ else:
                     sanriku_fares, other_fares, facility_fares = load_fare_data(FILE_PATH)
                     
                     plans = plan_tour(legs, trans_map, start_station, start_time_str, goal_station, selected_spots_with_stay, sanriku_fares, other_fares, facility_fares, num_adults, num_children)
-                    
-                    if not plans:
-                        st.error(f"❌ {start_station}発 ➔ {goal_station}着 で当日中に移動できるルートが見つかりませんでした。出発時刻や滞在時間を調整してください。")
-                    else:
-                        st.success(f"🎉 **{len(plans)} 件**のルートが見つかりました！（大人: {num_adults}名, 小人: {num_children}名）")
-                        
-                        for idx, p in enumerate(plans, 1):
-                            f = p['fares']
-                            
-                            with st.container(border=True):
-                                st.markdown(f"### ⭐ プラン {idx}：{p['order']}")
-                                
-                                col1, col2, col3 = st.columns(3)
-                                with col1:
-                                    st.metric("① 個別積上合計", f"¥{f['normal_total']:,}")
-                                    st.caption(f"内訳: 大人 ¥{f['normal_adult']:,} / 小人 ¥{f['normal_child']:,}")
-                                with col2:
-                                    st.metric("② 手配原価合計", f"¥{f['cost_total']:,}")
-                                    st.caption(f"内訳: 大人 ¥{f['cost_adult']:,} / 小人 ¥{f['cost_child']:,}")
-                                with col3:
-                                    st.metric("③ 🎉 販売価格合計", f"¥{f['sales_total']:,}")
-                                    st.caption(f"内訳: 大人 ¥{f['sales_adult']:,} / 小人 ¥{f['sales_child']:,}")
-                                    
-                                st.info(f"⏱ **総所要時間**: {p['total_duration']//60}時間{p['total_duration']%60}分 ｜ **区間**: {start_station} ({start_time_str}発) ➔ {goal_station} (**{min_to_str(p['final_arr_time'])}着**)")
-                                
-                                with st.expander("💴 運賃・アクティビティ計算の内訳（大人・小人別）を見る"):
-                                    for b in p['breakdown']:
-                                        st.write(b)
-                                        
-                                # 購入確認画面へ進むボタン
-                                if st.button(f"🛒 このプランを選択して購入確認へ進む (プラン {idx})", key=f"btn_confirm_{idx}", type="primary"):
-                                    st.session_state.confirm_plan = p
-                                    st.rerun()
-                                
-                                st.markdown("##### 📍 ルート詳細")
-                                for step in p['history']:
-                                    if step['type'] == 'ride':
-                                        st.markdown(f"🚆 **[{step['line']}]** `{step['from_stop']}` (**{min_to_str(step['dep_time'])}発**) ➔ `{step['to_stop']}` (**{min_to_str(step['arr_time'])}着**)")
-                                    elif step['type'] == 'transfer':
-                                        st.caption(f" 🚶 **徒歩・乗換 {step['duration']}分**: {step['from_stop']} ➔ {step['to_stop']}")
-                                    elif step['type'] == 'stay':
-                                        if step['activity']:
-                                            st.success(f"★ **【施設・体験】 {step['activity']}** （**{min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])}** / {step['stay_min']}分間）")
-                                        else:
-                                            st.success(f"★ **【観光・滞在】 {step['spot']}** （**{min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])}** / {step['stay_min']}分間）")
-                        
-                        st.divider()
-                        if st.button("🔄 次の検索（条件を再設定する）", use_container_width=True):
-                            st.rerun()
+                    st.session_state.plans_cache = plans
+                    st.session_state.search_meta = {
+                        'start_station': start_station,
+                        'goal_station': goal_station,
+                        'start_time_str': start_time_str,
+                        'num_adults': num_adults,
+                        'num_children': num_children
+                    }
+                    st.rerun()
                 except Exception as e:
                     st.error(f"エラーが発生しました: {e}")
+
+    # キャッシュされた検索結果がある場合に結果を表示
+    if st.session_state.plans_cache is not None:
+        plans = st.session_state.plans_cache
+        meta = st.session_state.get('search_meta', {})
+        
+        if not plans:
+            st.error("❌ 条件に一致するルートが見つかりませんでした。出発時刻や滞在時間を調整してください。")
+        else:
+            st.success(f"🎉 **{len(plans)} 件**のルートが見つかりました！（大人: {meta.get('num_adults', 1)}名, 小人: {meta.get('num_children', 0)}名）")
+            
+            for idx, p in enumerate(plans, 1):
+                f = p['fares']
+                
+                with st.container(border=True):
+                    st.markdown(f"### ⭐ プラン {idx}：{p['order']}")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("① 個別積上合計", f"¥{f['normal_total']:,}")
+                        st.caption(f"内訳: 大人 ¥{f['normal_adult']:,} / 小人 ¥{f['normal_child']:,}")
+                    with col2:
+                        st.metric("② 手配原価合計", f"¥{f['cost_total']:,}")
+                        st.caption(f"内訳: 大人 ¥{f['cost_adult']:,} / 小人 ¥{f['cost_child']:,}")
+                    with col3:
+                        st.metric("③ 🎉 販売価格合計", f"¥{f['sales_total']:,}")
+                        st.caption(f"内訳: 大人 ¥{f['sales_adult']:,} / 小人 ¥{f['sales_child']:,}")
+                        
+                    st.info(f"⏱ **総所要時間**: {p['total_duration']//60}時間{p['total_duration']%60}分 ｜ **区間**: {meta.get('start_station', '')} ({meta.get('start_time_str', '')}発) ➔ {meta.get('goal_station', '')} (**{min_to_str(p['final_arr_time'])}着**)")
+                    
+                    with st.expander("💴 運賃・アクティビティ計算の内訳（大人・小人別）を見る"):
+                        for b in p['breakdown']:
+                            st.write(b)
+                            
+                    # 購入確認画面へ進むボタン
+                    if st.button(f"🛒 このプランを選択して購入確認へ進む (プラン {idx})", key=f"btn_confirm_{idx}", type="primary"):
+                        st.session_state.confirm_plan = p
+                        st.rerun()
+                    
+                    st.markdown("##### 📍 ルート詳細")
+                    for step in p['history']:
+                        if step['type'] == 'ride':
+                            st.markdown(f"🚆 **[{step['line']}]** `{step['from_stop']}` (**{min_to_str(step['dep_time'])}発**) ➔ `{step['to_stop']}` (**{min_to_str(step['arr_time'])}着**)")
+                        elif step['type'] == 'transfer':
+                            st.caption(f" 🚶 **徒歩・乗換 {step['duration']}分**: {step['from_stop']} ➔ {step['to_stop']}")
+                        elif step['type'] == 'stay':
+                            if step['activity']:
+                                st.success(f"★ **【施設・体験】 {step['activity']}** （**{min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])}** / {step['stay_min']}分間）")
+                            else:
+                                st.success(f"★ **【観光・滞在】 {step['spot']}** （**{min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])}** / {step['stay_min']}分間）")
+            
+            st.divider()
+            if st.button("🔄 条件をリセットして再検索する", use_container_width=True):
+                st.session_state.plans_cache = None
+                st.session_state.search_meta = {}
+                st.rerun()
