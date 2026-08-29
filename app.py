@@ -225,6 +225,9 @@ def load_fare_data(filepath):
                 fixed_duration = parse_duration_to_min(row['所要時間'])
                     
             remark = str(row['備考']) if '備考' in df_fac.columns and pd.notna(row['備考']) else ''
+            
+            # エクセルの「説明」列を読み込む（存在しない場合は空文字）
+            description = str(row['説明']) if '説明' in df_fac.columns and pd.notna(row['説明']) else ''
 
             facility_fares[name] = {
                 'district': district,
@@ -233,7 +236,8 @@ def load_fare_data(filepath):
                 'nearest_stop': nearest_stop,
                 'is_fixed': is_fixed,
                 'fixed_duration': fixed_duration,
-                'remark': remark
+                'remark': remark,
+                'description': description
             }
                     
     if '他社_通常料金' in xls.sheet_names:
@@ -516,12 +520,11 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
         st.markdown(f"**📌 【 {dist} 地区 】**")
         for act_name in acts:
             info = facility_fares_raw[act_name]
-            
-            # エクセルの施設名をそのまま表示名として使用する
             display_name = act_name
 
             is_fixed = info['is_fixed']
             fixed_duration = info['fixed_duration']
+            description = info['description'] # エクセルの説明列のテキスト
             
             if is_fixed:
                 c_chk, c_dummy = st.columns([3, 2])
@@ -537,11 +540,9 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
                     checked = st.checkbox(display_name, key=f"chk_{act_name}")
                 with c_num:
                     if checked:
-                        # 琥珀博物館や青の洞窟サッパ船の注意書き表示
-                        if "琥珀博物館" in act_name:
-                            st.caption("💡 バス停までの送迎時間（往復約20分）を含めて設定してください。")
-                        elif "青の洞窟サッパ船" in act_name:
-                            st.caption("💡 順番待ちの時間を含めて50分以上で設定してください。")
+                        # エクセルの「説明」列に記述がある場合、そのままキャプションとして表示する
+                        if description and description != 'nan':
+                            st.caption(f"💡 {description}")
                         
                         stay = st.number_input("滞在(分)", min_value=15, max_value=240, value=fixed_duration, step=15, key=f"stay_{act_name}")
                         selected_spots_with_stay.append((act_name, stay, act_name))
