@@ -268,7 +268,7 @@ def load_fare_data(filepath):
     return sanriku_fares, other_fares, facility_fares
 
 def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_adults, num_children):
-    has_ryusendo = any(step.get('type'] == 'stay' and step.get('activity') == '龍泉洞' for step in history)
+    has_ryusendo = any(step.get('type') == 'stay' and step.get('activity') == '龍泉洞' for step in history)
     
     normal_adult_total = 0
     normal_child_total = 0
@@ -374,11 +374,9 @@ def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_adu
                 if "サッパ船" in act_name:
                     total_people = num_adults + num_children
                     if total_people <= 2:
-                        # 1名または2名利用時は最低7600円
                         sum_n = 7600
                         sum_c = 7600
                         
-                        # 大人・小人への按分または計上
                         share_a = n_a * num_adults
                         share_c = n_c * num_children
                         base_sum = share_a + share_c
@@ -714,7 +712,7 @@ if search_btn:
                                 st.metric("③ 🎉 販売価格合計", f"¥{f['sales_total']:,}")
                                 st.caption(f"内訳: 大人 ¥{f['sales_adult']:,} / 小人 ¥{f['sales_child']:,}")
                                 
-                            st.info(f"⏱ **総所要時間**: {p['total_duration']//60}時間{p['total_duration%60']}分 ｜ **区間**: {start_station} ({start_time_str}発) ➔ {goal_station} (**{min_to_str(p['final_arr_time'])}着**)")
+                            st.info(f"⏱ **総所要時間**: {p['total_duration']//60}時間{p['total_duration']%60}分 ｜ **区間**: {start_station} ({start_time_str}発) ➔ {goal_station} (**{min_to_str(p['final_arr_time'])}着**)")
                             
                             with st.expander("💴 運賃・アクティビティ計算の内訳（大人・小人別）を見る"):
                                 for b in p['breakdown']:
