@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# ファイル名（GitHubにアップロードしている名前に合わせる）
+# ファイル名
 FILE_PATH = "統合版・2026年三陸鉄道周辺ダイヤ_4_2.xlsx"
 
 # ==========================================
@@ -27,6 +27,29 @@ def parse_time_to_min(val):
         if len(parts) >= 2 and parts[0].isdigit():
             return int(parts[0]) * 60 + int(parts[1])
     return None
+
+def parse_duration_to_min(val):
+    if pd.isna(val):
+        return 60
+    if isinstance(val, (datetime.time, datetime.datetime)):
+        return val.hour * 60 + val.minute
+    if isinstance(val, pd.Timestamp):
+        return val.hour * 60 + val.minute
+    if isinstance(val, (int, float)):
+        if val < 1.0:
+            total_min = int(round(val * 24 * 60))
+            return total_min if total_min > 0 else 60
+        return int(val)
+    if isinstance(val, str):
+        val = val.strip()
+        if ':' in val:
+            parts = val.split(':')
+            return int(parts[0]) * 60 + int(parts[1])
+        try:
+            return int(float(val))
+        except:
+            pass
+    return 60
 
 def min_to_str(m):
     if m is None:
@@ -74,11 +97,12 @@ def load_data(filepath, target_date_str):
         '岩泉町民バス_東行': '岩泉町民バス',
         '岩手県北バス_往路': '岩手県北バス',
         '岩手県北バス_復路': '岩手県北バス',
-        '岩泉町民バス_往路': '岩手県北バス', # ※Excelシート名の誤設定をカバーする安全装置
+        '岩泉町民バス_往路': '岩手県北バス',
         '普代村営バス_往路': '普代村営バス',
         '普代村営バス_復路': '普代村営バス',
         '田野畑観光タクシー_行き': '田野畑観光タクシー',
         '田野畑観光タクシー_帰り': '田野畑観光タクシー',
+        '宮古うみねこ丸便': '宮古うみねこ丸',
     }
     
     for sname, line_name in sheet_line_map.items():
@@ -156,7 +180,6 @@ def load_fare_data(filepath):
     
     xls = pd.ExcelFile(filepath)
     
-    # 1. 三鉄運賃
     if '三鉄_運賃三角表' in xls.sheet_names:
         df_sanriku = pd.read_excel(filepath, sheet_name='三鉄_運賃三角表', index_col=0)
         for row in df_sanriku.index:
@@ -169,7 +192,7 @@ def load_fare_data(filepath):
                     except:
                         pass
                         
-    # 2. 施設・アクティビティ料金
+    # 施設料金シートの読み込み（エクセルの「所要時間固定」「所要時間」列を完全に連動）
     if '施設料金' in xls.sheet_names:
         df_fac = pd.read_excel(filepath, sheet_name='施設料金')
         for _, row in df_fac.iterrows():
@@ -178,14 +201,26 @@ def load_fare_data(filepath):
             nearest_stop = str(row['最寄り停留所']).strip() if pd.notna(row['最寄り停留所']) else 'nan'
             normal_f = float(row['通常料金']) if pd.notna(row['通常料金']) else 0
             group_f = float(row['団体・割引料金']) if pd.notna(row['団体・割引料金']) else normal_f
+            
+            is_fixed_raw = str(row['所要時間固定']).strip() if '所要時間固定' in df_fac.columns and pd.notna(row['所要時間固定']) else ''
+            is_fixed = (is_fixed_raw == '固定')
+            
+            fixed_duration = 60
+            if '所要時間' in df_fac.columns and pd.notna(row['所要時間']):
+                fixed_duration = parse_duration_to_min(row['所要時間'])
+                    
+            remark = str(row['備考']) if '備考' in df_fac.columns and pd.notna(row['備考']) else ''
+
             facility_fares[name] = {
                 'district': district,
                 'normal': normal_f, 
                 'group': group_f, 
-                'nearest_stop': nearest_stop
+                'nearest_stop': nearest_stop,
+                'is_fixed': is_fixed,
+                'fixed_duration': fixed_duration,
+                'remark': remark
             }
                     
-    # 3. 他社_通常料金（交通機関）
     if '他社_通常料金' in xls.sheet_names:
         df_other = pd.read_excel(filepath, sheet_name='他社_通常料金')
         for _, row in df_other.iterrows():
@@ -422,14 +457,14 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
     with col_d1:
         travel_date = st.date_input("出発日", datetime.date.today())
     with col_d2:
-        start_time = st.time_input("出発希望時刻", datetime.time(8, 30))
+        start_time = st.time_input("出発希望時刻", datetime.time(6, 30))
     with col_d3:
         num_people = st.number_input("👤 利用人数（大人）", min_value=1, max_value=10, value=1, step=1)
         
     date_str = travel_date.strftime("%Y-%m-%d")
     start_time_str = start_time.strftime("%H:%M")
 
-    station_options = ["宮古", "久慈", "盛", "釜石", "岩泉小本", "田野畑", "普代"]
+    station_options = ["宮古", "久慈", "釜石", "盛"]
     col_s1, col_s2 = st.columns(2)
     with col_s1:
         start_station = st.selectbox("出発駅（起点）", station_options, index=0)
@@ -438,28 +473,11 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
 
     st.markdown("##### 📍 訪問スポットを選択")
     
-    # 動的にExcelの「施設料金」シートからデータを取得し、地区ごとに整理する
     try:
         _, _, facility_fares_raw = load_fare_data(FILE_PATH)
     except:
         facility_fares_raw = {}
 
-    # デフォルトの標準滞在時間マッピング（必要に応じて調整可能）
-    default_stays = {
-        "龍泉洞": 60,
-        "奥浄土ヶ浜": 40,
-        "宮古うみねこ丸（出崎ふ頭周遊）": 40,
-        "宮古うみねこ丸（浄土ヶ浜周遊）": 40,
-        "青の洞窟サッパ船": 50,
-        "宮古市内観光": 60,
-        "北山崎断崖クルーズ": 60,
-        "北山崎サッパ船アドベンチャーズ": 60,
-        "北山崎展望台": 45,
-        "琥珀美術館": 60,
-        "久慈市内観光": 60,
-    }
-
-    # 地区ごとに施設をグループ化
     district_groups = {}
     for act_name, info in facility_fares_raw.items():
         dist = info['district']
@@ -469,28 +487,37 @@ with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=
 
     selected_spots_with_stay = []
 
-    # 地区ごとにタブやセクション、エクスパンダーで分けて表示
     for dist, acts in district_groups.items():
         st.markdown(f"**📌 【 {dist} 地区 】**")
         for act_name in acts:
             info = facility_fares_raw[act_name]
             nearest = info['nearest_stop']
             nearest_text = f"（最寄り: {nearest}）" if nearest and nearest != 'nan' else ""
-            label_text = f"{act_name}{nearest_text}"
-            def_val = default_stays.get(act_name, 60)
             
-            c_chk, c_num = st.columns([3, 2])
-            with c_chk:
-                checked = st.checkbox(label_text, key=f"chk_{act_name}")
-            with c_num:
-                if checked:
-                    stay = st.number_input(f"滞在(分)", min_value=15, max_value=240, value=def_val, step=15, key=f"stay_{act_name}")
-                    # 施設名をキーとして渡す（act_nameをspot_keyおよびactivityとして利用）
-                    selected_spots_with_stay.append((act_name, stay, act_name))
+            is_fixed = info['is_fixed']
+            fixed_duration = info['fixed_duration']
+            
+            if is_fixed:
+                label_text = f"{act_name}{nearest_text} <span style='color:gray; font-size:0.9em;'>(標準所要時間: {fixed_duration}分)</span>"
+                c_chk, c_dummy = st.columns([3, 2])
+                with c_chk:
+                    checked = st.checkbox(label_text, key=f"chk_{act_name}", help=f"所要時間固定 ({fixed_duration}分)")
+                with c_dummy:
+                    if checked:
+                        st.markdown(f"<div style='padding-top:5px; color:#555;'>⏱ 標準所要時間: <b>{fixed_duration}分</b></div>", unsafe_allow_html=True)
+                        selected_spots_with_stay.append((act_name, fixed_duration, act_name))
+            else:
+                label_text = f"{act_name}{nearest_text}"
+                c_chk, c_num = st.columns([3, 2])
+                with c_chk:
+                    checked = st.checkbox(label_text, key=f"chk_{act_name}")
+                with c_num:
+                    if checked:
+                        stay = st.number_input(f"滞在(分)", min_value=15, max_value=240, value=fixed_duration, step=15, key=f"stay_{act_name}")
+                        selected_spots_with_stay.append((act_name, stay, act_name))
 
     search_btn = st.button("🔍 最適ルートを検索する", type="primary", use_container_width=True)
 
-# 検索結果表示
 if search_btn:
     if not selected_spots_with_stay:
         st.warning("⚠️ 訪問したい観光スポットを1つ以上選択してください。")
