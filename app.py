@@ -3,6 +3,7 @@ import pandas as pd
 import datetime
 import itertools
 import heapq
+import re
 
 # ページ設定
 st.set_page_config(
@@ -250,14 +251,18 @@ def load_fare_data(filepath):
             normal_child = float(row['小人']) if ('小人' in df_other.columns and pd.notna(row['小人'])) else (normal_adult / 2.0)
             group_child = normal_child
             
+            capacity_str = str(row['乗車定員']) if ('乗車定員' in df_other.columns and pd.notna(row['乗車定員'])) else ''
+            
             if f_stop != 'nan' and t_stop != 'nan' and f_stop != t_stop:
                 other_fares[(operator, f_stop, t_stop)] = {
                     'normal_adult': normal_adult, 'group_adult': group_adult,
-                    'normal_child': normal_child, 'group_child': group_child
+                    'normal_child': normal_child, 'group_child': group_child,
+                    'capacity': capacity_str
                 }
                 other_fares[(operator, t_stop, f_stop)] = {
                     'normal_adult': normal_adult, 'group_adult': group_adult,
-                    'normal_child': normal_child, 'group_child': group_child
+                    'normal_child': normal_child, 'group_child': group_child,
+                    'capacity': capacity_str
                 }
                 
     return sanriku_fares, other_fares, facility_fares
@@ -290,7 +295,7 @@ def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_adu
             
             if line == '三陸鉄道':
                 n_a = sanriku_fares.get((f_stop, t_stop), 0)
-                n_c = ((n_a + 19) // 20) * 10 if n_a > 0 else 0  # 鉄道小人半額端数切上
+                n_c = ((n_a + 19) // 20) * 10 if n_a > 0 else 0
                 c_a = 0 if has_ryusendo else n_a
                 c_c = 0 if has_ryusendo else n_c
                 
@@ -320,20 +325,42 @@ def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_adu
                     c_a = int(f_info.get('group_adult', n_a))
                     c_c = int(f_info.get('group_child', n_c))
                     
-                sum_n = n_a * num_adults + n_c * num_children
-                sum_c = c_a * num_adults + c_c * num_children
+                capacity_str = f_info.get('capacity', '')
                 
-                parts = []
-                if num_adults > 0:
-                    parts.append(f"大人 ¥{n_a:,}×{num_adults}")
-                if num_children > 0:
-                    parts.append(f"小人 ¥{n_c:,}×{num_children}")
-                breakdown.append(f"🚌 [{line}] {f_stop} ➔ {t_stop} : 通常 ¥{sum_n:,} ({', '.join(parts)}) / 原価 ¥{sum_c:,}")
-                
-                normal_adult_total += n_a * num_adults
-                normal_child_total += n_c * num_children
-                cost_adult_total += c_a * num_adults
-                cost_child_total += c_c * num_children
+                # タクシー等の定員（4人ごとに1台加算など）の判定
+                total_people = num_adults + num_children
+                if '1台' in capacity_str or '人' in capacity_str:
+                    nums = re.findall(r'\d+', capacity_str)
+                    cap = int(nums[0]) if nums else 4
+                    vehicles = (total_people + cap - 1) // cap if total_people > 0 else 0
+                    
+                    # 1台あたりの料金を全乗客でシェア / または車両単位の計算
+                    # ここでは車両数分の基本料金として計上し、大人・小人に按分または合算
+                    sum_n = n_a * vehicles
+                    sum_c = c_a * vehicles
+                    
+                    # 原価・通常に反映
+                    normal_adult_total += sum_n if num_adults > 0 else 0
+                    normal_child_total += 0
+                    cost_adult_total += sum_c if num_adults > 0 else 0
+                    cost_child_total += 0
+                    
+                    breakdown.append(f"🚕 [{line}] {f_stop} ➔ {t_stop} : 通常 ¥{sum_n:,} (車両{vehicles}台分) / 原価 ¥{sum_c:,}")
+                else:
+                    sum_n = n_a * num_adults + n_c * num_children
+                    sum_c = c_a * num_adults + c_c * num_children
+                    
+                    parts = []
+                    if num_adults > 0:
+                        parts.append(f"大人 ¥{n_a:,}×{num_adults}")
+                    if num_children > 0:
+                        parts.append(f"小人 ¥{n_c:,}×{num_children}")
+                    breakdown.append(f"🚌 [{line}] {f_stop} ➔ {t_stop} : 通常 ¥{sum_n:,} ({', '.join(parts)}) / 原価 ¥{sum_c:,}")
+                    
+                    normal_adult_total += n_a * num_adults
+                    normal_child_total += n_c * num_children
+                    cost_adult_total += c_a * num_adults
+                    cost_child_total += c_c * num_children
                 
         elif step['type'] == 'stay':
             act_name = step.get('activity')
