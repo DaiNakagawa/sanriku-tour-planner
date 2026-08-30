@@ -754,6 +754,7 @@ elif st.session_state.current_page == 'payment':
 # ------------------------------------------
 elif st.session_state.current_page == 'pass':
     st.markdown("## 📱 デジタルパス (チケット一覧)")
+    meta = st.session_state.get('search_meta', {})
     
     # 【ビューB: 個別のチケット詳細画面】
     if st.session_state.active_ticket_id is not None:
@@ -787,8 +788,13 @@ elif st.session_state.current_page == 'pass':
                 st.markdown(f"### {t['title']}")
                 st.markdown(f"**利用交通機関・施設:** {t['provider']}")
                 st.markdown(f"**区間/対象:** {t['section']}")
-                st.markdown(f"**利用人数:** 大人 {t['adults']}名 / 小人 {t['children']}名")
-                st.markdown(f"**金額:** {t['amount']}")
+                
+                # 古いセッション状態エラーを防ぐためのフォールバック処理
+                a_count = t.get('adults', meta.get('num_adults', 1))
+                c_count = t.get('children', meta.get('num_children', 0))
+                st.markdown(f"**利用人数:** 大人 {a_count}名 / 小人 {c_count}名")
+                
+                st.markdown(f"**金額:** {t.get('amount', '---')}")
                 
                 st.divider()
                 st.warning("⚠️ **「使用確認」ボタンは係員の前で押してください。**")
