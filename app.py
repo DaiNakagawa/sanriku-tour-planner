@@ -397,7 +397,7 @@ def calculate_fares(history, sanriku_fares, other_fares, facility_fares, num_adu
                             parts.append(f"大人 ¥{alloc_a:,}")
                         if num_children > 0:
                             parts.append(f"小人 ¥{alloc_c:,}")
-                        breakdown.append(f"🎫 [体験・入場] {act_name} (1〜2名最低料金適用) : 通常 ¥7,600 ({', '.join(parts)}) / 原価 ¥7,600")
+                        breakdown.append(f"🎫 [体験・入場] {act_name} (特定料金適用) : 特定 ¥7,600 ({', '.join(parts)}) / 原価 ¥7,600")
                     else:
                         sum_n = n_a * num_adults + n_c * num_children
                         sum_c = c_a * num_adults + c_c * num_children
@@ -626,7 +626,6 @@ if st.session_state.confirm_plan is not None:
     st.markdown("#### 🎫 このパスに含まれる交通機関・施設・アクティビティ")
     st.markdown("このパスには、次の交通機関・施設・アクティビティの運賃が含まれています。")
     
-    # 運賃・料金データを再取得
     try:
         sanriku_fares_ref, other_fares_ref, facility_fares_ref = load_fare_data(FILE_PATH)
     except:
@@ -637,9 +636,8 @@ if st.session_state.confirm_plan is not None:
     n_children = meta.get('num_children', 0)
     has_ryusendo = any(step.get('type') == 'stay' and step.get('activity') == '龍泉洞' for step in p['history'])
 
-    # 含まれる交通機関の整理（三鉄は区間別、うみねこ丸は施設側に統合して案内）
-    line_details = {} # line_name -> list of description strings
-    spots_details = [] # list of (spot_name, description_string)
+    line_details = {}
+    spots_details = []
 
     for step in p['history']:
         if step['type'] == 'ride':
@@ -648,7 +646,6 @@ if st.session_state.confirm_plan is not None:
             t_stop = step['to_stop']
             
             if line == '宮古うみねこ丸':
-                # うみねこ丸は施設側に含めるため交通機関側には案内表示のみ
                 continue
                 
             if line == '三陸鉄道':
@@ -713,7 +710,7 @@ if st.session_state.confirm_plan is not None:
                         parts.append(f"大人 ¥{alloc_a:,}")
                     if n_children > 0:
                         parts.append(f"小人 ¥{alloc_c:,}")
-                    desc = f"通常 ¥7,600 ({', '.join(parts)})"
+                    desc = f"特定 ¥7,600 ({', '.join(parts)})"
                 else:
                     sum_n = n_a * n_adults + n_c * n_children
                     if sum_n > 0:
@@ -729,7 +726,6 @@ if st.session_state.confirm_plan is not None:
                 spots_details.append((act_name, desc))
 
     st.markdown("**🚆 含まれる交通機関（路線）:**")
-    # リストにあるすべての路線を表示（うみねこ丸が含まれている場合は専用メッセージ）
     all_active_lines = set(line_details.keys())
     for step in p['history']:
         if step['type'] == 'ride':
@@ -896,7 +892,7 @@ else:
                         st.metric("③ 🎉 販売価格合計", f"¥{f['sales_total']:,}")
                         st.caption(f"内訳: 大人 ¥{f['sales_adult']:,} / 小人 ¥{f['sales_child']:,}")
                         
-                    st.info(f"⏱ **総所要時間**: {p['total_duration']//60}時間{p['total_duration']%60}分 ｜ **区間**: {meta.get('start_station', '')} ({meta.get('start_time_str', '')}発) ➔ {meta.get('goal_station', '')} (**{min_to_str(p['final_arr_time'])}着**)")
+                    st.info(f"⏱ **総所要時間**: {p['total_duration']//60}時間{p['total_duration%60']}分 ｜ **区間**: {meta.get('start_station', '')} ({meta.get('start_time_str', '')}発) ➔ {meta.get('goal_station', '')} (**{min_to_str(p['final_arr_time'])}着**)")
                     
                     with st.expander("💴 運賃・アクティビティ計算の内訳（大人・小人別）を見る"):
                         for b in p['breakdown']:
