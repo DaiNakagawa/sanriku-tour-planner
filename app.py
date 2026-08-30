@@ -609,7 +609,7 @@ if st.session_state.confirm_plan is not None:
     
     st.markdown("## 🛍️ ご購入内容の確認")
     
-    # 選択されたプラン表示欄（出発地・到着地・日付・出発時刻を追加）
+    # 選択されたプラン表示欄（出発地・到着地・日付・出発時刻を表示）
     start_st = meta.get('start_station', '')
     goal_st = meta.get('goal_station', '')
     travel_dt_str = meta.get('travel_date_str', str(datetime.date.today()))
@@ -747,25 +747,18 @@ if st.session_state.confirm_plan is not None:
         if step['type'] == 'ride':
             all_active_lines.add(step['line'])
             
-    # HTMLリスト構造を用いてマークが同じにならないよう階層を明確に分ける
-    lines_html = "<ul>"
+    # 各交通機関を独立した見出しにし、内訳項目は絵文字アイコン付きの箇条書きにしてネストの問題を解消
     for line in sorted(list(all_active_lines)):
         if line == '宮古うみねこ丸':
-            lines_html += f"<li><b>{line}</b>: 施設・アクティビティに含まれます。</li>"
+            st.markdown(f"- **{line}**: 施設・アクティビティに含まれます。")
         else:
-            lines_html += f"<li><b>{line}</b><ul>"
+            st.markdown(f"- **{line}**")
             for d in line_details.get(line, []):
-                lines_html += f"<li>{d}</li>"
-            lines_html += "</ul></li>"
-    lines_html += "</ul>"
-    st.markdown(lines_html, unsafe_allow_html=True)
+                st.markdown(f"  &nbsp;&nbsp;&nbsp;&nbsp;🔸 {d}")
         
     st.markdown("**🏛️ 含まれる施設・アクティビティ:**")
-    spots_html = "<ul>"
     for spot_name, spot_desc in spots_details:
-        spots_html += f"<li><b>{spot_name}</b>: {spot_desc}</li>"
-    spots_html += "</ul>"
-    st.markdown(spots_html, unsafe_allow_html=True)
+        st.markdown(f"- **{spot_name}**: {spot_desc}")
         
     st.markdown("---")
     col_btn1, col_btn2 = st.columns(2)
@@ -917,11 +910,18 @@ else:
                         st.metric("③ 🎉 販売価格合計", f"¥{f['sales_total']:,}")
                         st.caption(f"内訳: 大人 ¥{f['sales_adult']:,} / 小人 ¥{f['sales_child']:,}")
                         
-                    st.info(f"⏱ **総所要時間**: {p['total_duration']//60}時間{p['total_duration']%60}分 ｜ **区間**: {meta.get('start_station', '')} ({meta.get('start_time_str', '')}発) ➔ {meta.get('goal_station', '')} (**{min_to_str(p['final_arr_time'])}着**)")
+                    st.info(f"⏱ **総所要時間**: {p['total_duration']//60}時間{p['total_duration%60']}分 ｜ **区間**: {meta.get('start_station', '')} ({meta.get('start_time_str', '')}発) ➔ {meta.get('goal_station', '')} (**{min_to_str(p['final_arr_time'])}着**)")
                     
                     with st.expander("💴 運賃・アクティビティ計算の内訳（大人・小人別）を見る"):
                         for b in p['breakdown']:
                             st.write(b)
+                            
+                    # 個別積上と販売価格の比較による警告・メッセージ表示
+                    diff = abs(f['normal_total'] - f['sales_total'])
+                    if diff < 200:
+                        st.warning("⚠️ このプランは、個別にチケットを購入された場合との差は200円未満ですが、よろしいですか。")
+                    elif f['normal_total'] < f['sales_total']:
+                        st.warning("⚠️ このプランは、個別にチケットを購入された方が安いですがよろしいですか。このプランのメリットは、その都度、決済する必要がないことです。")
                             
                     if st.button(f"🛒 このプランを選択して購入確認へ進む (プラン {idx})", key=f"btn_confirm_{idx}", type="primary"):
                         st.session_state.confirm_plan = p
