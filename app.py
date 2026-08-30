@@ -605,9 +605,27 @@ if 'plans_cache' not in st.session_state:
 if st.session_state.confirm_plan is not None:
     p = st.session_state.confirm_plan
     f = p['fares']
+    meta = st.session_state.get('search_meta', {})
     
     st.markdown("## 🛍️ ご購入内容の確認")
-    st.success(f"### 選択されたプラン：{p['order']}")
+    
+    # 選択されたプラン表示欄（出発地・到着地・日付・出発時刻を追加）
+    start_st = meta.get('start_station', '')
+    goal_st = meta.get('goal_station', '')
+    travel_dt_str = meta.get('travel_date_str', str(datetime.date.today()))
+    start_tm_str = meta.get('start_time_str', '06:30')
+    
+    st.markdown(
+        f"""
+        <div style="background-color: #e6f4ea; border: 2px solid #34a853; border-radius: 10px; padding: 15px 20px; margin-bottom: 20px;">
+            <h4 style="color: #137333; margin-top: 0;">🗺️ 選択されたプラン：{p['order']}</h4>
+            <p style="margin-bottom: 0; color: #202124; font-size: 1.05em;">
+                <b>📍 出発・到着:</b> {start_st} ➔ {goal_st} &nbsp;&nbsp;|&nbsp;&nbsp; <b>📅 出発日:</b> {travel_dt_str} &nbsp;&nbsp;|&nbsp;&nbsp; <b>⏰ 出発時刻:</b> {start_tm_str}発
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
     
     col_c1, col_c2, col_c3 = st.columns(3)
     with col_c1:
@@ -631,10 +649,8 @@ if st.session_state.confirm_plan is not None:
     except:
         sanriku_fares_ref, other_fares_ref, facility_fares_ref = {}, {}, {}
 
-    meta = st.session_state.get('search_meta', {})
     n_adults = meta.get('num_adults', 1)
     n_children = meta.get('num_children', 0)
-    has_ryusendo = any(step.get('type') == 'stay' and step.get('activity') == '龍泉洞' for step in p['history'])
 
     line_details = {}
     spots_details = []
@@ -731,17 +747,25 @@ if st.session_state.confirm_plan is not None:
         if step['type'] == 'ride':
             all_active_lines.add(step['line'])
             
+    # HTMLリスト構造を用いてマークが同じにならないよう階層を明確に分ける
+    lines_html = "<ul>"
     for line in sorted(list(all_active_lines)):
         if line == '宮古うみねこ丸':
-            st.markdown(f"- **{line}**: 施設・アクティビティに含まれます。")
+            lines_html += f"<li><b>{line}</b>: 施設・アクティビティに含まれます。</li>"
         else:
-            st.markdown(f"- **{line}**")
+            lines_html += f"<li><b>{line}</b><ul>"
             for d in line_details.get(line, []):
-                st.markdown(f"    - {d}")
+                lines_html += f"<li>{d}</li>"
+            lines_html += "</ul></li>"
+    lines_html += "</ul>"
+    st.markdown(lines_html, unsafe_allow_html=True)
         
     st.markdown("**🏛️ 含まれる施設・アクティビティ:**")
+    spots_html = "<ul>"
     for spot_name, spot_desc in spots_details:
-        st.markdown(f"- **{spot_name}**: {spot_desc}")
+        spots_html += f"<li><b>{spot_name}</b>: {spot_desc}</li>"
+    spots_html += "</ul>"
+    st.markdown(spots_html, unsafe_allow_html=True)
         
     st.markdown("---")
     col_btn1, col_btn2 = st.columns(2)
@@ -858,6 +882,7 @@ else:
                     st.session_state.search_meta = {
                         'start_station': start_station,
                         'goal_station': goal_station,
+                        'travel_date_str': date_str,
                         'start_time_str': start_time_str,
                         'num_adults': num_adults,
                         'num_children': num_children
@@ -910,7 +935,6 @@ else:
                             st.caption(f" 🚶 **徒歩・乗換 {step['duration']}分**: {step['from_stop']} ➔ {step['to_stop']}")
                         elif step['type'] == 'stay':
                             if step['activity']:
-                                # 施設・体験の行を目立たせるためのスタイル（カスタムHTMLボックス）
                                 st.markdown(
                                     f"""
                                     <div style="background-color: #f0f8ff; border: 2px solid #4682b4; border-radius: 8px; padding: 10px 15px; margin: 10px 0;">
