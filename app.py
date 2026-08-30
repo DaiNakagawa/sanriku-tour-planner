@@ -626,23 +626,126 @@ if st.session_state.confirm_plan is not None:
     st.markdown("#### 🎫 このパスに含まれる交通機関・施設・アクティビティ")
     st.markdown("このパスには、次の交通機関・施設・アクティビティの運賃が含まれています。")
     
-    included_lines = set()
-    included_spots = []
+    # 運賃・料金データを再取得
+    try:
+        sanriku_fares_ref, other_fares_ref, facility_fares_ref = load_fare_data(FILE_PATH)
+    except:
+        sanriku_fares_ref, other_fares_ref, facility_fares_ref = {}, {}, {}
+
+    meta = st.session_state.get('search_meta', {})
+    n_adults = meta.get('num_adults', 1)
+    n_children = meta.get('num_children', 0)
+    has_ryusendo = any(step.get('type') == 'stay' and step.get('activity') == '龍泉洞' for step in p['history'])
+
+    # 含まれる交通機関の整理（三鉄は区間別、うみねこ丸は施設側に統合して案内）
+    line_details = {} # line_name -> list of description strings
+    spots_details = [] # list of (spot_name, description_string)
+
     for step in p['history']:
         if step['type'] == 'ride':
-            included_lines.add(step['line'])
-        elif step['type'] == 'stay':
-            name = step.get('activity') or step.get('spot')
-            if name and name not in included_spots:
-                included_spots.append(name)
+            line = step['line']
+            f_stop = step['from_stop']
+            t_stop = step['to_stop']
+            
+            if line == '宮古うみねこ丸':
+                # うみねこ丸は施設側に含めるため交通機関側には案内表示のみ
+                continue
                 
+            if line == '三陸鉄道':
+                n_a = sanriku_fares_ref.get((f_stop, t_stop), 0)
+                n_c = ((n_a + 19) // 20) * 10 if n_a > 0 else 0
+                sum_n = n_a * n_adults + n_c * n_children
+                parts = []
+                if n_adults > 0:
+                    parts.append(f"大人 ¥{n_a:,}×{n_adults}")
+                if n_children > 0:
+                    parts.append(f"小人 ¥{n_c:,}×{n_children}")
+                desc = f"{f_stop} ➔ {t_stop} : 通常 ¥{sum_n:,} ({', '.join(parts)})"
+                if line not in line_details:
+                    line_details[line] = []
+                line_details[line].append(desc)
+            else:
+                f_info = other_fares_ref.get((line, f_stop, t_stop), {})
+                n_a = int(f_info.get('normal_adult', 0))
+                n_c = int(f_info.get('normal_child', 0))
+                capacity_str = f_info.get('capacity', '')
+                total_p = n_adults + n_children
+                
+                if '1台' in capacity_str or '人' in capacity_str:
+                    nums = re.findall(r'\d+', capacity_str)
+                    cap = int(nums[0]) if nums else 4
+                    vehicles = (total_p + cap - 1) // cap if total_p > 0 else 0
+                    sum_n = n_a * vehicles
+                    desc = f"{f_stop} ➔ {t_stop} : 通常 ¥{sum_n:,} (車両{vehicles}台分)"
+                else:
+                    sum_n = n_a * n_adults + n_c * n_children
+                    parts = []
+                    if n_adults > 0:
+                        parts.append(f"大人 ¥{n_a:,}×{n_adults}")
+                    if n_children > 0:
+                        parts.append(f"小人 ¥{n_c:,}×{n_children}")
+                    desc = f"{f_stop} ➔ {t_stop} : 通常 ¥{sum_n:,} ({', '.join(parts)})"
+                    
+                if line not in line_details:
+                    line_details[line] = []
+                line_details[line].append(desc)
+                
+        elif step['type'] == 'stay':
+            act_name = step.get('activity')
+            if act_name:
+                f_info = facility_fares_ref.get(act_name, {})
+                n_a = int(f_info.get('normal_adult', 0))
+                n_c = int(f_info.get('normal_child', 0))
+                
+                if "サッパ船" in act_name and (n_adults + n_children) <= 2:
+                    sum_n = 7600
+                    share_a = n_a * n_adults
+                    share_c = n_c * n_children
+                    base_sum = share_a + share_c
+                    if base_sum > 0:
+                        alloc_a = int(round(7600 * (share_a / base_sum)))
+                        alloc_c = 7600 - alloc_a
+                    else:
+                        alloc_a = 7600 if n_adults > 0 else 0
+                        alloc_c = 7600 if n_children > 0 else 0
+                    parts = []
+                    if n_adults > 0:
+                        parts.append(f"大人 ¥{alloc_a:,}")
+                    if n_children > 0:
+                        parts.append(f"小人 ¥{alloc_c:,}")
+                    desc = f"通常 ¥7,600 ({', '.join(parts)})"
+                else:
+                    sum_n = n_a * n_adults + n_c * n_children
+                    if sum_n > 0:
+                        parts = []
+                        if n_adults > 0:
+                            parts.append(f"大人 ¥{n_a:,}×{n_adults}")
+                        if n_children > 0:
+                            parts.append(f"小人 ¥{n_c:,}×{n_children}")
+                        desc = f"通常 ¥{sum_n:,} ({', '.join(parts)})"
+                    else:
+                        desc = "入場無料"
+                        
+                spots_details.append((act_name, desc))
+
     st.markdown("**🚆 含まれる交通機関（路線）:**")
-    for line in sorted(list(included_lines)):
-        st.markdown(f"- {line}")
+    # リストにあるすべての路線を表示（うみねこ丸が含まれている場合は専用メッセージ）
+    all_active_lines = set(line_details.keys())
+    for step in p['history']:
+        if step['type'] == 'ride':
+            all_active_lines.add(step['line'])
+            
+    for line in sorted(list(all_active_lines)):
+        if line == '宮古うみねこ丸':
+            st.markdown(f"- **{line}**: 施設・アクティビティに含まれます。")
+        else:
+            st.markdown(f"- **{line}**:")
+            for d in line_details.get(line, []):
+                st.markdown(f"  - {d}")
         
     st.markdown("**🏛️ 含まれる施設・アクティビティ:**")
-    for spot in included_spots:
-        st.markdown(f"- {spot}")
+    for spot_name, spot_desc in spots_details:
+        st.markdown(f"- **{spot_name}**: {spot_desc}")
         
     st.markdown("---")
     col_btn1, col_btn2 = st.columns(2)
@@ -660,7 +763,7 @@ if st.session_state.confirm_plan is not None:
                 st.rerun()
 
 else:
-    # 検索画面（設定 expander は検索結果がない時や条件変更時に開く）
+    # 検索画面
     with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=(st.session_state.plans_cache is None)):
         col_d1, col_d2 = st.columns(2)
         with col_d1:
@@ -767,7 +870,6 @@ else:
                 except Exception as e:
                     st.error(f"エラーが発生しました: {e}")
 
-    # キャッシュされた検索結果がある場合に結果を表示
     if st.session_state.plans_cache is not None:
         plans = st.session_state.plans_cache
         meta = st.session_state.get('search_meta', {})
@@ -800,7 +902,6 @@ else:
                         for b in p['breakdown']:
                             st.write(b)
                             
-                    # 購入確認画面へ進むボタン
                     if st.button(f"🛒 このプランを選択して購入確認へ進む (プラン {idx})", key=f"btn_confirm_{idx}", type="primary"):
                         st.session_state.confirm_plan = p
                         st.rerun()
