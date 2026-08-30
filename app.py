@@ -921,11 +921,32 @@ else:
                         for b in p['breakdown']:
                             st.write(b)
                             
-                    diff = abs(f['normal_total'] - f['sales_total'])
-                    if diff < 200:
-                        st.warning("⚠️ このプランは、個別にチケットを購入された場合との差は200円未満ですが、よろしいですか。")
-                    elif f['normal_total'] < f['sales_total']:
-                        st.warning("⚠️ このプランは、個別にチケットを購入された方が安いですがよろしいですか。このプランのメリットは、その都度、決済する必要がないことです。")
+                    diff = f['sales_total'] - f['normal_total']
+                    if diff >= 200:
+                        st.markdown(
+                            """
+                            <div style="background-color: #ffebee; border: 3px solid #e53935; border-radius: 8px; padding: 15px; margin: 20px 0;">
+                                <div style="color: #c62828; font-size: 1.15em; font-weight: bold; margin-bottom: 8px;">
+                                    ⚠️ ご注意：このプランは、個別にチケットを購入された方が安いですがよろしいですか。
+                                </div>
+                                <div style="color: #333333; font-size: 1em; line-height: 1.5;">
+                                    このプランのメリットは、その都度、決済する必要がないことです。内容をご確認の上、よろしければ「購入確認へ進む」を押してください。
+                                </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                    elif abs(f['normal_total'] - f['sales_total']) < 200:
+                        st.markdown(
+                            """
+                            <div style="background-color: #fff8e1; border: 3px solid #ffb300; border-radius: 8px; padding: 15px; margin: 20px 0;">
+                                <div style="color: #ff8f00; font-size: 1.15em; font-weight: bold;">
+                                    ⚠️ ご確認：このプランは、個別にチケットを購入された場合との差は200円未満ですが、よろしいですか。
+                                </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
                             
                     if st.button(f"🛒 このプランを選択して購入確認へ進む (プラン {idx})", key=f"btn_confirm_{idx}", type="primary"):
                         st.session_state.confirm_plan = p
