@@ -4,6 +4,7 @@ import datetime
 import itertools
 import heapq
 import re
+import streamlit.components.v1 as components
 
 # ページ設定
 st.set_page_config(
@@ -662,10 +663,8 @@ elif st.session_state.current_page == 'payment':
         st.text_input("セキュリティコード (CVC)")
 
     if st.button("決済を完了してパスを発行する", type="primary", use_container_width=True):
-        # 購入完了時にチケットを生成
         tickets = []
         for i, step in enumerate(st.session_state.confirm_plan['history']):
-            # ダミーのユニークID
             ticket_id = f"ticket_{i}_{int(datetime.datetime.now().timestamp())}"
             if step['type'] == 'ride':
                 tickets.append({
@@ -699,7 +698,27 @@ elif st.session_state.current_page == 'payment':
 # ------------------------------------------
 elif st.session_state.current_page == 'pass':
     st.markdown("## 📱 デジタル乗車券・入場券 (マイパス)")
-    st.success(f"**{st.session_state.user_info.get('name', 'お客様')}** 様のチケット一覧です。利用する交通機関・施設のチケットを選択して「使う」ボタンを押してください。")
+    st.success(f"**{st.session_state.user_info.get('name', 'お客様')}** 様のチケット一覧です。")
+    
+    # 時計表示コンポーネント (スクリーンショット防止用)
+    clock_html = """
+    <div style="background-color: #e8f0fe; padding: 15px; border-radius: 10px; text-align: center; border: 2px solid #137333; margin-bottom: 20px;">
+        <div style="font-size: 1.1em; font-weight: bold; color: #137333; margin-bottom: 5px;">現在時刻（不正利用防止）</div>
+        <div id="clock" style="font-size: 2.5em; font-weight: bold; color: #000; letter-spacing: 2px; font-family: monospace;"></div>
+    </div>
+    <script>
+        function updateTime() {
+            const now = new Date();
+            const timeString = now.toLocaleTimeString('ja-JP', { hour12: false });
+            document.getElementById('clock').textContent = timeString;
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
+    </script>
+    """
+    components.html(clock_html, height=120)
+
+    st.warning("⚠️ **「使用確認」ボタンは係員の前で押してください。**誤って事前に押してしまった場合、チケットは無効になります。")
     
     for i, t in enumerate(st.session_state.my_tickets):
         with st.container(border=True):
@@ -711,7 +730,7 @@ elif st.session_state.current_page == 'pass':
             with col_action:
                 if t['status'] == "未使用":
                     st.success("🟢 未使用")
-                    if st.button("チケットを使う", key=f"use_btn_{t['id']}", type="primary", use_container_width=True):
+                    if st.button("使用確認", key=f"use_btn_{t['id']}", type="primary", use_container_width=True):
                         st.session_state.my_tickets[i]['status'] = "使用済み"
                         st.rerun()
                 else:
