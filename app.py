@@ -100,6 +100,10 @@ def load_data(filepath, target_date_str):
         for _, r in df_master.iterrows():
             if pd.notna(r[col_s]) and pd.notna(r[col_l]):
                 sheet_line_map[str(r[col_s]).strip()] = str(r[col_l]).strip()
+                
+    # 路線マスタにないクルーズ便を補完
+    if '北山崎断崖クルーズ' in xls.sheet_names and '北山崎断崖クルーズ' not in sheet_line_map:
+        sheet_line_map['北山崎断崖クルーズ'] = '北山崎断崖クルーズ'
     
     for sname, line_name in sheet_line_map.items():
         if sname not in xls.sheet_names:
@@ -540,6 +544,19 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
                 nearest = facility_fares[act_name].get('nearest_stop')
                 if nearest and nearest != 'nan':
                     target_stop = nearest
+                    
+            # 船・クルーズ等の時刻表を持つアクティビティに対する強制上書き補正
+            act_line_target = None
+            if act_name:
+                if "宮古うみねこ丸" in act_name:
+                    act_line_target = "宮古うみねこ丸"
+                    if "出崎ふ頭" in act_name:
+                        target_stop = "出崎ふ頭"
+                    elif "浄土ヶ浜" in act_name:
+                        target_stop = "宮古うみねこ丸・浄土ヶ浜"
+                elif "北山崎断崖クルーズ" in act_name:
+                    act_line_target = "北山崎断崖クルーズ"
+                    target_stop = "島越港"
             
             routes = find_routes_point_to_point(legs, trans_map, cur_stop, cur_time, target_stop)
             if not routes:
@@ -548,18 +565,51 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
             
             arr_time, route_hist = routes[0]
             full_history.extend(route_hist)
-            leave_time = arr_time + stay_min
             
-            full_history.append({
-                'type': 'stay',
-                'spot': target_stop,
-                'activity': act_name,
-                'stay_min': stay_min,
-                'arr_time': arr_time,
-                'dep_time': leave_time
-            })
-            cur_stop = target_stop
-            cur_time = leave_time
+            if act_line_target:
+                # 該当する便のダイヤを検索
+                best_leg = None
+                for leg in legs:
+                    if leg['line'] == act_line_target and leg['from_stop'] == target_stop:
+                        if leg['dep_time'] >= arr_time:
+                            if "全体周遊" in act_name and leg['from_stop'] != leg['to_stop']: continue
+                            if "移動" in act_name and leg['from_stop'] == leg['to_stop']: continue
+                            if "北山崎断崖クルーズ" in act_name and leg['from_stop'] != leg['to_stop']: continue
+                            
+                            if best_leg is None or leg['dep_time'] < best_leg['dep_time']:
+                                best_leg = leg
+                
+                if best_leg:
+                    leave_time = best_leg['arr_time']
+                    full_history.append({
+                        'type': 'stay',
+                        'spot': target_stop,
+                        'activity': act_name,
+                        'stay_min': leave_time - arr_time,
+                        'arr_time': arr_time,
+                        'dep_time': leave_time,
+                        'timetable_ride': True,
+                        'ride_dep': best_leg['dep_time'],
+                        'ride_arr': best_leg['arr_time'],
+                        'ride_to_stop': best_leg['to_stop']
+                    })
+                    cur_stop = best_leg['to_stop']
+                    cur_time = leave_time
+                else:
+                    is_possible = False
+                    break
+            else:
+                leave_time = arr_time + stay_min
+                full_history.append({
+                    'type': 'stay',
+                    'spot': target_stop,
+                    'activity': act_name,
+                    'stay_min': stay_min,
+                    'arr_time': arr_time,
+                    'dep_time': leave_time
+                })
+                cur_stop = target_stop
+                cur_time = leave_time
             
         if not is_possible:
             continue
@@ -727,13 +777,20 @@ elif st.session_state.current_page == 'payment':
                     sum_n = n_a * n_adults + n_c * n_children
                     amount_str = f"¥{sum_n:,}" if sum_n > 0 else "無料"
                     
+                if step.get('timetable_ride'):
+                    time_str = f"{min_to_str(step['ride_dep'])}発 ➔ {min_to_str(step['ride_arr'])}着"
+                    section_str = f"{step['spot']} ➔ {step.get('ride_to_stop', step['spot'])}"
+                else:
+                    time_str = f"利用予定: {min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])}"
+                    section_str = "施設・体験入場"
+                    
                 tickets.append({
                     "id": ticket_id,
                     "type": "activity",
                     "title": f"🎫 {act}",
                     "provider": act,
-                    "section": "施設・体験入場",
-                    "time": f"利用予定: {min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])}",
+                    "section": section_str,
+                    "time": time_str,
                     "amount": amount_str,
                     "status": "未使用",
                     "adults": n_adults,
@@ -789,7 +846,6 @@ elif st.session_state.current_page == 'pass':
                 st.markdown(f"**利用交通機関・施設:** {t['provider']}")
                 st.markdown(f"**区間/対象:** {t['section']}")
                 
-                # 古いセッション状態エラーを防ぐためのフォールバック処理
                 a_count = t.get('adults', meta.get('num_adults', 1))
                 c_count = t.get('children', meta.get('num_children', 0))
                 st.markdown(f"**利用人数:** 大人 {a_count}名 / 小人 {c_count}名")
@@ -801,7 +857,6 @@ elif st.session_state.current_page == 'pass':
                 
                 if t['status'] == "未使用":
                     if st.button("使用確認", type="primary", use_container_width=True):
-                        # ステータスを使用済みにする
                         for i, tk in enumerate(st.session_state.my_tickets):
                             if tk['id'] == t['id']:
                                 st.session_state.my_tickets[i]['status'] = "使用済み"
@@ -821,7 +876,10 @@ elif st.session_state.current_page == 'pass':
                 with col_info:
                     st.markdown(f"#### {t['title']}")
                     st.markdown(f"**{t['section']}**")
-                    st.caption(f"🕒 {t['time']} （他の便にも乗車・乗船できます。）")
+                    if "発 ➔" in t['time']:
+                        st.caption(f"🕒 {t['time']} （他の便にも乗車・乗船できます。）")
+                    else:
+                        st.caption(f"🕒 {t['time']} （当日の営業時間内であればいつでも利用可能です。）")
                 with col_action:
                     if t['status'] == "未使用":
                         if st.button("使用する", key=f"open_btn_{t['id']}", type="primary", use_container_width=True):
@@ -1202,15 +1260,26 @@ elif st.session_state.current_page == 'search':
                             st.caption(f" 🚶 **徒歩・乗換 {step['duration']}分**: {step['from_stop']} ➔ {step['to_stop']}")
                         elif step['type'] == 'stay':
                             if step['activity']:
-                                st.markdown(
-                                    f"""
-                                    <div style="background-color: #f0f8ff; border: 2px solid #4682b4; border-radius: 8px; padding: 10px 15px; margin: 10px 0;">
-                                        ⭐ <b>【施設・体験】 {step['activity']}</b><br>
-                                        <span style="color: #333333; font-size: 0.9em;">🕒 滞在時間: {min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])} （{step['stay_min']}分間）</span>
-                                    </div>
-                                    """,
-                                    unsafe_allow_html=True
-                                )
+                                if step.get('timetable_ride'):
+                                    st.markdown(
+                                        f"""
+                                        <div style="background-color: #f0f8ff; border: 2px solid #4682b4; border-radius: 8px; padding: 10px 15px; margin: 10px 0;">
+                                            ⭐ <b>【施設・体験】 {step['activity']}</b><br>
+                                            <span style="color: #333333; font-size: 0.9em;">🕒 港到着 {min_to_str(step['arr_time'])} ➔ 乗船 {min_to_str(step['ride_dep'])} 〜 {min_to_str(step['ride_arr'])}</span>
+                                        </div>
+                                        """,
+                                        unsafe_allow_html=True
+                                    )
+                                else:
+                                    st.markdown(
+                                        f"""
+                                        <div style="background-color: #f0f8ff; border: 2px solid #4682b4; border-radius: 8px; padding: 10px 15px; margin: 10px 0;">
+                                            ⭐ <b>【施設・体験】 {step['activity']}</b><br>
+                                            <span style="color: #333333; font-size: 0.9em;">🕒 滞在時間: {min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])} （{step['stay_min']}分間）</span>
+                                        </div>
+                                        """,
+                                        unsafe_allow_html=True
+                                    )
                             else:
                                 st.markdown(
                                     f"""
