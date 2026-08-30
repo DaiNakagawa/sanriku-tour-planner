@@ -892,7 +892,7 @@ else:
                         st.metric("③ 🎉 販売価格合計", f"¥{f['sales_total']:,}")
                         st.caption(f"内訳: 大人 ¥{f['sales_adult']:,} / 小人 ¥{f['sales_child']:,}")
                         
-                    st.info(f"⏱ **総所要時間**: {p['total_duration']//60}時間{p['total_duration%60']}分 ｜ **区間**: {meta.get('start_station', '')} ({meta.get('start_time_str', '')}発) ➔ {meta.get('goal_station', '')} (**{min_to_str(p['final_arr_time'])}着**)")
+                    st.info(f"⏱ **総所要時間**: {p['total_duration']//60}時間{p['total_duration']%60}分 ｜ **区間**: {meta.get('start_station', '')} ({meta.get('start_time_str', '')}発) ➔ {meta.get('goal_station', '')} (**{min_to_str(p['final_arr_time'])}着**)")
                     
                     with st.expander("💴 運賃・アクティビティ計算の内訳（大人・小人別）を見る"):
                         for b in p['breakdown']:
