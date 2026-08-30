@@ -609,7 +609,6 @@ if st.session_state.confirm_plan is not None:
     
     st.markdown("## 🛍️ ご購入内容の確認")
     
-    # 選択されたプラン表示欄（出発地・到着地・日付・出発時刻を表示）
     start_st = meta.get('start_station', '')
     goal_st = meta.get('goal_station', '')
     travel_dt_str = meta.get('travel_date_str', str(datetime.date.today()))
@@ -747,18 +746,24 @@ if st.session_state.confirm_plan is not None:
         if step['type'] == 'ride':
             all_active_lines.add(step['line'])
             
-    # 各交通機関を独立した見出しにし、内訳項目は絵文字アイコン付きの箇条書きにしてネストの問題を解消
+    lines_html = "<ul>"
     for line in sorted(list(all_active_lines)):
         if line == '宮古うみねこ丸':
-            st.markdown(f"- **{line}**: 施設・アクティビティに含まれます。")
+            lines_html += f"<li><b>{line}</b>: 施設・アクティビティに含まれます。</li>"
         else:
-            st.markdown(f"- **{line}**")
+            lines_html += f"<li><b>{line}</b><ul>"
             for d in line_details.get(line, []):
-                st.markdown(f"  &nbsp;&nbsp;&nbsp;&nbsp;🔸 {d}")
+                lines_html += f"<li>{d}</li>"
+            lines_html += "</ul></li>"
+    lines_html += "</ul>"
+    st.markdown(lines_html, unsafe_allow_html=True)
         
     st.markdown("**🏛️ 含まれる施設・アクティビティ:**")
+    spots_html = "<ul>"
     for spot_name, spot_desc in spots_details:
-        st.markdown(f"- **{spot_name}**: {spot_desc}")
+        spots_html += f"<li><b>{spot_name}</b>: {spot_desc}</li>"
+    spots_html += "</ul>"
+    st.markdown(spots_html, unsafe_allow_html=True)
         
     st.markdown("---")
     col_btn1, col_btn2 = st.columns(2)
@@ -916,7 +921,6 @@ else:
                         for b in p['breakdown']:
                             st.write(b)
                             
-                    # 個別積上と販売価格の比較による警告・メッセージ表示
                     diff = abs(f['normal_total'] - f['sales_total'])
                     if diff < 200:
                         st.warning("⚠️ このプランは、個別にチケットを購入された場合との差は200円未満ですが、よろしいですか。")
