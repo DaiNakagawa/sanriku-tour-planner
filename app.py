@@ -605,6 +605,8 @@ if 'user_info' not in st.session_state:
     st.session_state.user_info = {}
 if 'my_tickets' not in st.session_state:
     st.session_state.my_tickets = []
+if 'active_ticket_id' not in st.session_state:
+    st.session_state.active_ticket_id = None
 
 st.title("🚃 三陸海岸・じぶんの旅パス")
 
@@ -664,28 +666,78 @@ elif st.session_state.current_page == 'payment':
 
     if st.button("決済を完了してパスを発行する", type="primary", use_container_width=True):
         tickets = []
+        meta = st.session_state.get('search_meta', {})
+        n_adults = meta.get('num_adults', 1)
+        n_children = meta.get('num_children', 0)
+        has_ryusendo = any(step.get('type') == 'stay' and step.get('activity') == '龍泉洞' for step in st.session_state.confirm_plan['history'])
+        try:
+            sanriku_fares_ref, other_fares_ref, facility_fares_ref = load_fare_data(FILE_PATH)
+        except:
+            sanriku_fares_ref, other_fares_ref, facility_fares_ref = {}, {}, {}
+
         for i, step in enumerate(st.session_state.confirm_plan['history']):
             ticket_id = f"ticket_{i}_{int(datetime.datetime.now().timestamp())}"
+            amount_str = ""
+            
             if step['type'] == 'ride':
+                line = step['line']
+                f_stop = step['from_stop']
+                t_stop = step['to_stop']
+                if line == '三陸鉄道':
+                    n_a = sanriku_fares_ref.get((f_stop, t_stop), 0)
+                    n_c = ((n_a + 19) // 20) * 10 if n_a > 0 else 0
+                    sum_n = n_a * n_adults + n_c * n_children
+                    amount_str = f"¥{sum_n:,}"
+                else:
+                    f_info = other_fares_ref.get((line, f_stop, t_stop), {})
+                    n_a = int(f_info.get('normal_adult', 0))
+                    n_c = int(f_info.get('normal_child', 0))
+                    cap_str = f_info.get('capacity', '')
+                    tot_p = n_adults + n_children
+                    if '1台' in cap_str or '人' in cap_str:
+                        nums = re.findall(r'\d+', cap_str)
+                        cap = int(nums[0]) if nums else 4
+                        veh = (tot_p + cap - 1) // cap if tot_p > 0 else 0
+                        amount_str = f"¥{n_a * veh:,}"
+                    else:
+                        amount_str = f"¥{(n_a * n_adults + n_c * n_children):,}"
+                        
                 tickets.append({
                     "id": ticket_id,
                     "type": "ride",
                     "title": f"🚆 {step['line']}",
+                    "provider": step['line'],
                     "section": f"{step['from_stop']} ➔ {step['to_stop']}",
                     "time": f"{min_to_str(step['dep_time'])}発 ➔ {min_to_str(step['arr_time'])}着",
+                    "amount": amount_str if amount_str else "---",
                     "status": "未使用"
                 })
+                
             elif step['type'] == 'stay' and step.get('activity'):
+                act = step.get('activity')
+                f_info = facility_fares_ref.get(act, {})
+                n_a = int(f_info.get('normal_adult', 0))
+                n_c = int(f_info.get('normal_child', 0))
+                tot_p = n_adults + n_children
+                if "サッパ船" in act and tot_p <= 2:
+                    amount_str = "¥7,600"
+                else:
+                    sum_n = n_a * n_adults + n_c * n_children
+                    amount_str = f"¥{sum_n:,}" if sum_n > 0 else "無料"
+                    
                 tickets.append({
                     "id": ticket_id,
                     "type": "activity",
-                    "title": f"🎫 {step['activity']}",
-                    "section": "施設・体験",
+                    "title": f"🎫 {act}",
+                    "provider": act,
+                    "section": "施設・体験入場",
                     "time": f"利用予定: {min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])}",
+                    "amount": amount_str,
                     "status": "未使用"
                 })
                 
         st.session_state.my_tickets = tickets
+        st.session_state.active_ticket_id = None
         st.session_state.current_page = 'pass'
         st.rerun()
         
@@ -697,52 +749,79 @@ elif st.session_state.current_page == 'payment':
 # 画面3: デジタル乗車券・入場券 (マイパス)
 # ------------------------------------------
 elif st.session_state.current_page == 'pass':
-    st.markdown("## 📱 デジタル乗車券・入場券 (マイパス)")
-    st.success(f"**{st.session_state.user_info.get('name', 'お客様')}** 様のチケット一覧です。")
+    st.markdown("## 📱 デジタルパス (チケット一覧)")
     
-    # 時計表示コンポーネント (スクリーンショット防止用)
-    clock_html = """
-    <div style="background-color: #e8f0fe; padding: 15px; border-radius: 10px; text-align: center; border: 2px solid #137333; margin-bottom: 20px;">
-        <div style="font-size: 1.1em; font-weight: bold; color: #137333; margin-bottom: 5px;">現在時刻（不正利用防止）</div>
-        <div id="clock" style="font-size: 2.5em; font-weight: bold; color: #000; letter-spacing: 2px; font-family: monospace;"></div>
-    </div>
-    <script>
-        function updateTime() {
-            const now = new Date();
-            const timeString = now.toLocaleTimeString('ja-JP', { hour12: false });
-            document.getElementById('clock').textContent = timeString;
-        }
-        setInterval(updateTime, 1000);
-        updateTime();
-    </script>
-    """
-    components.html(clock_html, height=120)
-
-    st.warning("⚠️ **「使用確認」ボタンは係員の前で押してください。**誤って事前に押してしまった場合、チケットは無効になります。")
-    
-    for i, t in enumerate(st.session_state.my_tickets):
-        with st.container(border=True):
-            col_info, col_action = st.columns([3, 1])
-            with col_info:
-                st.markdown(f"#### {t['title']}")
+    # 【ビューB: 個別のチケット詳細画面】
+    if st.session_state.active_ticket_id is not None:
+        t = next((tk for tk in st.session_state.my_tickets if tk['id'] == st.session_state.active_ticket_id), None)
+        if t:
+            if st.button("⬅️ チケット一覧に戻る"):
+                st.session_state.active_ticket_id = None
+                st.rerun()
+                
+            # 時計表示 (シンプル)
+            clock_html = """
+            <div style="text-align: center; margin: 15px 0;">
+                <div id="clock" style="font-size: 3.5em; font-weight: bold; color: #111; font-family: 'Courier New', Courier, monospace; letter-spacing: 2px;"></div>
+            </div>
+            <script>
+                function updateTime() {
+                    const now = new Date();
+                    document.getElementById('clock').textContent = now.toLocaleTimeString('ja-JP', { hour12: false });
+                }
+                setInterval(updateTime, 1000);
+                updateTime();
+            </script>
+            """
+            components.html(clock_html, height=100)
+            
+            with st.container(border=True):
+                st.markdown(f"### {t['title']}")
+                st.markdown(f"**利用交通機関・施設:** {t['provider']}")
                 st.markdown(f"**区間/対象:** {t['section']}")
-                st.caption(f"🕒 {t['time']}")
-            with col_action:
+                st.markdown(f"**金額:** {t['amount']}")
+                
+                st.divider()
+                st.warning("⚠️ **「使用確認」ボタンは係員の前で押してください。**")
+                
                 if t['status'] == "未使用":
-                    st.success("🟢 未使用")
-                    if st.button("使用確認", key=f"use_btn_{t['id']}", type="primary", use_container_width=True):
-                        st.session_state.my_tickets[i]['status'] = "使用済み"
+                    if st.button("使用確認", type="primary", use_container_width=True):
+                        # ステータスを使用済みにする
+                        for i, tk in enumerate(st.session_state.my_tickets):
+                            if tk['id'] == t['id']:
+                                st.session_state.my_tickets[i]['status'] = "使用済み"
+                                break
+                        st.session_state.active_ticket_id = None
                         st.rerun()
                 else:
-                    st.markdown("<div style='text-align: center; color: gray; margin-top: 10px; padding: 10px; background-color: #f0f0f0; border-radius: 5px;'><b>⚪ 使用済み</b></div>", unsafe_allow_html=True)
+                    st.error("このチケットは既に使用済みです。")
                     
-    st.divider()
-    if st.button("🔄 検索画面に戻る (データをリセット)"):
-        st.session_state.current_page = 'search'
-        st.session_state.confirm_plan = None
-        st.session_state.plans_cache = None
-        st.session_state.my_tickets = []
-        st.rerun()
+    # 【ビューA: チケット一覧画面】
+    else:
+        st.success(f"**{st.session_state.user_info.get('name', 'お客様')}** 様のチケット一覧です。利用するチケットの「使用する」ボタンを押してください。")
+        
+        for i, t in enumerate(st.session_state.my_tickets):
+            with st.container(border=True):
+                col_info, col_action = st.columns([3, 1])
+                with col_info:
+                    st.markdown(f"#### {t['title']}")
+                    st.caption(f"🕒 {t['time']}")
+                with col_action:
+                    if t['status'] == "未使用":
+                        if st.button("使用する", key=f"open_btn_{t['id']}", type="primary", use_container_width=True):
+                            st.session_state.active_ticket_id = t['id']
+                            st.rerun()
+                    else:
+                        st.markdown("<div style='text-align: center; color: gray; margin-top: 10px; padding: 10px; background-color: #f0f0f0; border-radius: 5px;'><b>使用済み</b></div>", unsafe_allow_html=True)
+                        
+        st.divider()
+        if st.button("🔄 検索画面に戻る (データをリセット)"):
+            st.session_state.current_page = 'search'
+            st.session_state.confirm_plan = None
+            st.session_state.plans_cache = None
+            st.session_state.my_tickets = []
+            st.session_state.active_ticket_id = None
+            st.rerun()
 
 # ------------------------------------------
 # 画面4: 購入確認画面
