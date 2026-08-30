@@ -735,9 +735,9 @@ if st.session_state.confirm_plan is not None:
         if line == '宮古うみねこ丸':
             st.markdown(f"- **{line}**: 施設・アクティビティに含まれます。")
         else:
-            st.markdown(f"- **{line}**:")
+            st.markdown(f"- **{line}**")
             for d in line_details.get(line, []):
-                st.markdown(f"  - {d}")
+                st.markdown(f"    - {d}")
         
     st.markdown("**🏛️ 含まれる施設・アクティビティ:**")
     for spot_name, spot_desc in spots_details:
@@ -910,9 +910,26 @@ else:
                             st.caption(f" 🚶 **徒歩・乗換 {step['duration']}分**: {step['from_stop']} ➔ {step['to_stop']}")
                         elif step['type'] == 'stay':
                             if step['activity']:
-                                st.success(f"★ **【施設・体験】 {step['activity']}** （**{min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])}** / {step['stay_min']}分間）")
+                                # 施設・体験の行を目立たせるためのスタイル（カスタムHTMLボックス）
+                                st.markdown(
+                                    f"""
+                                    <div style="background-color: #f0f8ff; border: 2px solid #4682b4; border-radius: 8px; padding: 10px 15px; margin: 10px 0;">
+                                        ⭐ <b>【施設・体験】 {step['activity']}</b><br>
+                                        <span style="color: #333333; font-size: 0.9em;">🕒 滞在時間: {min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])} （{step['stay_min']}分間）</span>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True
+                                )
                             else:
-                                st.success(f"★ **【観光・滞在】 {step['spot']}** （**{min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])}** / {step['stay_min']}分間）")
+                                st.markdown(
+                                    f"""
+                                    <div style="background-color: #f5fffa; border: 2px solid #2e8b57; border-radius: 8px; padding: 10px 15px; margin: 10px 0;">
+                                        🌿 <b>【観光・滞在】 {step['spot']}</b><br>
+                                        <span style="color: #333333; font-size: 0.9em;">🕒 滞在時間: {min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])} （{step['stay_min']}分間）</span>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True
+                                )
             
             st.divider()
             if st.button("🔄 条件をリセットして再検索する", use_container_width=True):
