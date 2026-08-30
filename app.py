@@ -101,7 +101,6 @@ def load_data(filepath, target_date_str):
             if pd.notna(r[col_s]) and pd.notna(r[col_l]):
                 sheet_line_map[str(r[col_s]).strip()] = str(r[col_l]).strip()
                 
-    # 路線マスタにないクルーズ便を補完
     if '北山崎断崖クルーズ' in xls.sheet_names and '北山崎断崖クルーズ' not in sheet_line_map:
         sheet_line_map['北山崎断崖クルーズ'] = '北山崎断崖クルーズ'
     
@@ -545,7 +544,6 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
                 if nearest and nearest != 'nan':
                     target_stop = nearest
                     
-            # 船・クルーズ等の時刻表を持つアクティビティに対する強制上書き補正
             act_line_target = None
             if act_name:
                 if "宮古うみねこ丸" in act_name:
@@ -567,7 +565,6 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
             full_history.extend(route_hist)
             
             if act_line_target:
-                # 該当する便のダイヤを検索
                 best_leg = None
                 for leg in legs:
                     if leg['line'] == act_line_target and leg['from_stop'] == target_stop:
@@ -813,6 +810,11 @@ elif st.session_state.current_page == 'pass':
     st.markdown("## 📱 デジタルパス (チケット一覧)")
     meta = st.session_state.get('search_meta', {})
     
+    start_st = meta.get('start_station', '')
+    goal_st = meta.get('goal_station', '')
+    travel_dt_str = meta.get('travel_date_str', str(datetime.date.today()))
+    start_tm_str = meta.get('start_time_str', '06:30')
+    
     # 【ビューB: 個別のチケット詳細画面】
     if st.session_state.active_ticket_id is not None:
         t = next((tk for tk in st.session_state.my_tickets if tk['id'] == st.session_state.active_ticket_id), None)
@@ -821,7 +823,6 @@ elif st.session_state.current_page == 'pass':
                 st.session_state.active_ticket_id = None
                 st.rerun()
                 
-            # 時計表示 (スクリーンショット防止のため1/10秒まで表示)
             clock_html = """
             <div style="text-align: center; margin: 15px 0;">
                 <div id="clock" style="font-size: 3.5em; font-weight: bold; color: #111; font-family: 'Courier New', Courier, monospace; letter-spacing: 2px;"></div>
@@ -868,6 +869,16 @@ elif st.session_state.current_page == 'pass':
                     
     # 【ビューA: チケット一覧画面】
     else:
+        st.markdown(
+            f"""
+            <div style="background-color: #f8f9fa; border: 1px solid #dadce0; border-radius: 8px; padding: 12px 16px; margin-bottom: 15px;">
+                <span style="color: #202124; font-size: 1.05em;">
+                    <b>📍 区間:</b> {start_st} ➔ {goal_st} &nbsp;&nbsp;|&nbsp;&nbsp; <b>📅 出発:</b> {travel_dt_str} {start_tm_str}発
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
         st.success(f"**{st.session_state.user_info.get('name', 'お客様')}** 様のチケット一覧です。利用するチケットの「使用する」ボタンを押してください。")
         
         for i, t in enumerate(st.session_state.my_tickets):
