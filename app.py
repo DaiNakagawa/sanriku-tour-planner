@@ -710,7 +710,9 @@ elif st.session_state.current_page == 'payment':
                     "section": f"{step['from_stop']} ➔ {step['to_stop']}",
                     "time": f"{min_to_str(step['dep_time'])}発 ➔ {min_to_str(step['arr_time'])}着",
                     "amount": amount_str if amount_str else "---",
-                    "status": "未使用"
+                    "status": "未使用",
+                    "adults": n_adults,
+                    "children": n_children
                 })
                 
             elif step['type'] == 'stay' and step.get('activity'):
@@ -733,7 +735,9 @@ elif st.session_state.current_page == 'payment':
                     "section": "施設・体験入場",
                     "time": f"利用予定: {min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])}",
                     "amount": amount_str,
-                    "status": "未使用"
+                    "status": "未使用",
+                    "adults": n_adults,
+                    "children": n_children
                 })
                 
         st.session_state.my_tickets = tickets
@@ -759,7 +763,7 @@ elif st.session_state.current_page == 'pass':
                 st.session_state.active_ticket_id = None
                 st.rerun()
                 
-            # 時計表示 (シンプル)
+            # 時計表示 (スクリーンショット防止のため1/10秒まで表示)
             clock_html = """
             <div style="text-align: center; margin: 15px 0;">
                 <div id="clock" style="font-size: 3.5em; font-weight: bold; color: #111; font-family: 'Courier New', Courier, monospace; letter-spacing: 2px;"></div>
@@ -767,9 +771,13 @@ elif st.session_state.current_page == 'pass':
             <script>
                 function updateTime() {
                     const now = new Date();
-                    document.getElementById('clock').textContent = now.toLocaleTimeString('ja-JP', { hour12: false });
+                    const h = String(now.getHours()).padStart(2, '0');
+                    const m = String(now.getMinutes()).padStart(2, '0');
+                    const s = String(now.getSeconds()).padStart(2, '0');
+                    const ms = String(Math.floor(now.getMilliseconds() / 100)); // 1/10秒
+                    document.getElementById('clock').textContent = `${h}:${m}:${s}.${ms}`;
                 }
-                setInterval(updateTime, 1000);
+                setInterval(updateTime, 100);
                 updateTime();
             </script>
             """
@@ -779,6 +787,7 @@ elif st.session_state.current_page == 'pass':
                 st.markdown(f"### {t['title']}")
                 st.markdown(f"**利用交通機関・施設:** {t['provider']}")
                 st.markdown(f"**区間/対象:** {t['section']}")
+                st.markdown(f"**利用人数:** 大人 {t['adults']}名 / 小人 {t['children']}名")
                 st.markdown(f"**金額:** {t['amount']}")
                 
                 st.divider()
@@ -805,7 +814,8 @@ elif st.session_state.current_page == 'pass':
                 col_info, col_action = st.columns([3, 1])
                 with col_info:
                     st.markdown(f"#### {t['title']}")
-                    st.caption(f"🕒 {t['time']}")
+                    st.markdown(f"**{t['section']}**")
+                    st.caption(f"🕒 {t['time']} （他の便にも乗車・乗船できます。）")
                 with col_action:
                     if t['status'] == "未使用":
                         if st.button("使用する", key=f"open_btn_{t['id']}", type="primary", use_container_width=True):
