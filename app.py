@@ -590,19 +590,145 @@ def plan_tour(legs, trans_map, start_stop, start_time_str, goal_stop, spots_with
     return successful_plans
 
 # ==========================================
-# 2. UI 表示
+# 2. 状態管理・ルーティング
 # ==========================================
-st.title("🚃 三陸海岸・じぶんの旅パス")
-st.caption("行きたい場所を選んで、ルート検索からチケット購入まで")
-
-# Session State 初期化
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = 'search'
 if 'confirm_plan' not in st.session_state:
     st.session_state.confirm_plan = None
 if 'plans_cache' not in st.session_state:
     st.session_state.plans_cache = None
+if 'auth_step' not in st.session_state:
+    st.session_state.auth_step = 'input_email'
+if 'user_info' not in st.session_state:
+    st.session_state.user_info = {}
+if 'my_tickets' not in st.session_state:
+    st.session_state.my_tickets = []
 
-# 購入確認画面
-if st.session_state.confirm_plan is not None:
+st.title("🚃 三陸海岸・じぶんの旅パス")
+
+# ==========================================
+# 画面描画
+# ==========================================
+
+# ------------------------------------------
+# 画面1: 認証・ユーザー情報入力 (モックアップ)
+# ------------------------------------------
+if st.session_state.current_page == 'auth':
+    st.markdown("## 🔒 ユーザー情報の入力と認証")
+    name = st.text_input("氏名", value=st.session_state.user_info.get('name', ''))
+    email = st.text_input("メールアドレス", value=st.session_state.user_info.get('email', ''))
+
+    if st.session_state.auth_step == 'input_email':
+        if st.button("認証コードを送信する", type="primary"):
+            if name and email:
+                st.session_state.user_info = {'name': name, 'email': email}
+                st.session_state.auth_step = 'verify_code'
+                st.rerun()
+            else:
+                st.error("氏名とメールアドレスを入力してください。")
+        if st.button("⬅️ プラン確認に戻る"):
+            st.session_state.current_page = 'confirm'
+            st.rerun()
+            
+    elif st.session_state.auth_step == 'verify_code':
+        st.success(f"{st.session_state.user_info['email']} 宛に認証コードを送信しました。")
+        st.info("※テスト用ダミー: 「1234」と入力して進んでください。")
+        code = st.text_input("4桁の認証コード", max_chars=4)
+        if st.button("認証して次へ", type="primary"):
+            if code == "1234":
+                st.session_state.current_page = 'payment'
+                st.rerun()
+            else:
+                st.error("認証コードが正しくありません。（「1234」を入力してください）")
+        if st.button("⬅️ メールアドレスを修正する"):
+            st.session_state.auth_step = 'input_email'
+            st.rerun()
+
+# ------------------------------------------
+# 画面2: クレジットカード決済 (モックアップ)
+# ------------------------------------------
+elif st.session_state.current_page == 'payment':
+    st.markdown("## 💳 クレジットカード決済")
+    f = st.session_state.confirm_plan['fares']
+    
+    st.info(f"**決済金額（販売価格合計）: ¥{f['sales_total']:,}**")
+    
+    st.text_input("カード番号 (ダミー)")
+    col_cc1, col_cc2 = st.columns(2)
+    with col_cc1:
+        st.text_input("有効期限 (MM/YY)")
+    with col_cc2:
+        st.text_input("セキュリティコード (CVC)")
+
+    if st.button("決済を完了してパスを発行する", type="primary", use_container_width=True):
+        # 購入完了時にチケットを生成
+        tickets = []
+        for i, step in enumerate(st.session_state.confirm_plan['history']):
+            # ダミーのユニークID
+            ticket_id = f"ticket_{i}_{int(datetime.datetime.now().timestamp())}"
+            if step['type'] == 'ride':
+                tickets.append({
+                    "id": ticket_id,
+                    "type": "ride",
+                    "title": f"🚆 {step['line']}",
+                    "section": f"{step['from_stop']} ➔ {step['to_stop']}",
+                    "time": f"{min_to_str(step['dep_time'])}発 ➔ {min_to_str(step['arr_time'])}着",
+                    "status": "未使用"
+                })
+            elif step['type'] == 'stay' and step.get('activity'):
+                tickets.append({
+                    "id": ticket_id,
+                    "type": "activity",
+                    "title": f"🎫 {step['activity']}",
+                    "section": "施設・体験",
+                    "time": f"利用予定: {min_to_str(step['arr_time'])} 〜 {min_to_str(step['dep_time'])}",
+                    "status": "未使用"
+                })
+                
+        st.session_state.my_tickets = tickets
+        st.session_state.current_page = 'pass'
+        st.rerun()
+        
+    if st.button("⬅️ 戻る"):
+        st.session_state.current_page = 'auth'
+        st.rerun()
+
+# ------------------------------------------
+# 画面3: デジタル乗車券・入場券 (マイパス)
+# ------------------------------------------
+elif st.session_state.current_page == 'pass':
+    st.markdown("## 📱 デジタル乗車券・入場券 (マイパス)")
+    st.success(f"**{st.session_state.user_info.get('name', 'お客様')}** 様のチケット一覧です。利用する交通機関・施設のチケットを選択して「使う」ボタンを押してください。")
+    
+    for i, t in enumerate(st.session_state.my_tickets):
+        with st.container(border=True):
+            col_info, col_action = st.columns([3, 1])
+            with col_info:
+                st.markdown(f"#### {t['title']}")
+                st.markdown(f"**区間/対象:** {t['section']}")
+                st.caption(f"🕒 {t['time']}")
+            with col_action:
+                if t['status'] == "未使用":
+                    st.success("🟢 未使用")
+                    if st.button("チケットを使う", key=f"use_btn_{t['id']}", type="primary", use_container_width=True):
+                        st.session_state.my_tickets[i]['status'] = "使用済み"
+                        st.rerun()
+                else:
+                    st.markdown("<div style='text-align: center; color: gray; margin-top: 10px; padding: 10px; background-color: #f0f0f0; border-radius: 5px;'><b>⚪ 使用済み</b></div>", unsafe_allow_html=True)
+                    
+    st.divider()
+    if st.button("🔄 検索画面に戻る (データをリセット)"):
+        st.session_state.current_page = 'search'
+        st.session_state.confirm_plan = None
+        st.session_state.plans_cache = None
+        st.session_state.my_tickets = []
+        st.rerun()
+
+# ------------------------------------------
+# 画面4: 購入確認画面
+# ------------------------------------------
+elif st.session_state.current_page == 'confirm' and st.session_state.confirm_plan is not None:
     p = st.session_state.confirm_plan
     f = p['fares']
     meta = st.session_state.get('search_meta', {})
@@ -769,19 +895,20 @@ if st.session_state.confirm_plan is not None:
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
         if st.button("⬅️ 検索結果に戻る", use_container_width=True):
-            st.session_state.confirm_plan = None
+            st.session_state.current_page = 'search'
             st.rerun()
     with col_btn2:
         if st.button("🎉 この内容で申し込む（購入手続きへ）", type="primary", use_container_width=True):
-            st.balloons()
-            st.success("✅ ご予約・ご購入手続きへ進みます。ご利用ありがとうございました！")
-            if st.button("🔄 最初からやり直す", use_container_width=True):
-                st.session_state.confirm_plan = None
-                st.session_state.plans_cache = None
-                st.rerun()
+            st.session_state.current_page = 'auth'
+            st.session_state.auth_step = 'input_email'
+            st.rerun()
 
-else:
-    # 検索画面
+# ------------------------------------------
+# 画面5: ルート検索 (デフォルト)
+# ------------------------------------------
+elif st.session_state.current_page == 'search':
+    st.caption("行きたい場所を選んで、ルート検索からチケット購入まで")
+    
     with st.expander("⚙️ **旅行条件・訪問地を設定する**", expanded=(st.session_state.plans_cache is None)):
         col_d1, col_d2 = st.columns(2)
         with col_d1:
@@ -950,6 +1077,7 @@ else:
                             
                     if st.button(f"🛒 このプランを選択して購入確認へ進む (プラン {idx})", key=f"btn_confirm_{idx}", type="primary"):
                         st.session_state.confirm_plan = p
+                        st.session_state.current_page = 'confirm'
                         st.rerun()
                     
                     st.markdown("##### 📍 ルート詳細")
